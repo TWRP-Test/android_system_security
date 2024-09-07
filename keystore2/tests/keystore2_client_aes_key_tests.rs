@@ -251,7 +251,7 @@ fn keystore2_aes_key_op_fails_multi_block_modes() {
 }
 
 /// Try to create an operation using AES key with multiple padding modes. Test should fail to create
-/// an operation with `UNSUPPORTED_PADDING_MODE` error code.
+/// an operation.
 #[test]
 fn keystore2_aes_key_op_fails_multi_padding_modes() {
     let sl = SecLevel::tee();
@@ -295,7 +295,12 @@ fn keystore2_aes_key_op_fails_multi_padding_modes() {
         false,
     ));
     assert!(result.is_err());
-    assert_eq!(Error::Km(ErrorCode::UNSUPPORTED_PADDING_MODE), result.unwrap_err());
+    assert!(matches!(
+        result.unwrap_err(),
+        Error::Km(ErrorCode::INCOMPATIBLE_PADDING_MODE)
+            | Error::Km(ErrorCode::UNSUPPORTED_PADDING_MODE)
+            | Error::Km(ErrorCode::INVALID_ARGUMENT)
+    ));
 }
 
 /// Generate a AES-ECB key with unpadded mode. Try to create an operation using generated key

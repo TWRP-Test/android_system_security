@@ -44,18 +44,15 @@ use android_security_metrics::aidl::android::security::metrics::{
     SecurityLevel::SecurityLevel as MetricsSecurityLevel, Storage::Storage as MetricsStorage,
 };
 use anyhow::{anyhow, Context, Result};
-use lazy_static::lazy_static;
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::sync::{LazyLock, Mutex};
 
 // Note: Crash events are recorded at keystore restarts, based on the assumption that keystore only
 // gets restarted after a crash, during a boot cycle.
 const KEYSTORE_CRASH_COUNT_PROPERTY: &str = "keystore.crash_count";
 
-lazy_static! {
-    /// Singleton for MetricsStore.
-    pub static ref METRICS_STORE: MetricsStore = Default::default();
-}
+/// Singleton for MetricsStore.
+pub static METRICS_STORE: LazyLock<MetricsStore> = LazyLock::new(Default::default);
 
 /// MetricsStore stores the <atom object, count> as <key, value> in the inner hash map,
 /// indexed by the atom id, in the outer hash map.

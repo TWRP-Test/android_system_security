@@ -961,7 +961,7 @@ impl LegacyBlobLoader {
 
     fn make_user_path_name(&self, user_id: u32) -> PathBuf {
         let mut path = self.path.clone();
-        path.push(&format!("user_{}", user_id));
+        path.push(format!("user_{}", user_id));
         path
     }
 

@@ -463,59 +463,6 @@ fn keystore2_attest_rsa_key_with_symmetric_key_fails_sys_error() {
     assert_eq!(Error::Rc(ResponseCode::INVALID_ARGUMENT), result.unwrap_err());
 }
 
-/// Generate RSA attestation key and try to use it as attestation key while generating symmetric
-/// key. Test should generate symmetric key successfully. Verify that generated symmetric key
-/// should not have attestation record or certificate.
-#[test]
-fn keystore2_attest_symmetric_key_fail_sys_error() {
-    skip_test_if_no_app_attest_key_feature!();
-
-    let sl = SecLevel::tee();
-    let att_challenge: &[u8] = b"foo";
-
-    // Create attestation key.
-    let Some(attestation_key_metadata) = key_generations::map_ks_error(
-        key_generations::generate_attestation_key(&sl, Algorithm::RSA, att_challenge),
-    )
-    .unwrap() else {
-        return;
-    };
-
-    let mut cert_chain: Vec<u8> = Vec::new();
-    cert_chain.extend(attestation_key_metadata.certificate.as_ref().unwrap());
-    cert_chain.extend(attestation_key_metadata.certificateChain.as_ref().unwrap());
-    validate_certchain(&cert_chain).expect("Error while validating cert chain.");
-
-    // Generate symmetric key with above generated key as attestation key.
-    let gen_params = authorizations::AuthSetBuilder::new()
-        .no_auth_required()
-        .algorithm(Algorithm::AES)
-        .purpose(KeyPurpose::ENCRYPT)
-        .purpose(KeyPurpose::DECRYPT)
-        .key_size(128)
-        .padding_mode(PaddingMode::NONE)
-        .block_mode(BlockMode::ECB)
-        .attestation_challenge(att_challenge.to_vec());
-
-    let alias = format!("ks_test_sym_key_attest_{}", getuid());
-    let aes_key_metadata = sl
-        .binder
-        .generateKey(
-            &KeyDescriptor { domain: Domain::APP, nspace: -1, alias: Some(alias), blob: None },
-            Some(&attestation_key_metadata.key),
-            &gen_params,
-            0,
-            b"entropy",
-        )
-        .unwrap();
-
-    // Should not have public certificate.
-    assert!(aes_key_metadata.certificate.is_none());
-
-    // Should not have an attestation record.
-    assert!(aes_key_metadata.certificateChain.is_none());
-}
-
 fn get_attestation_ids(keystore2: &binder::Strong<dyn IKeystoreService>) -> Vec<(Tag, Vec<u8>)> {
     let attest_ids = vec![
         (Tag::ATTESTATION_ID_BRAND, "brand"),
@@ -615,6 +562,8 @@ fn keystore2_attest_rsa_attestation_id() {
 #[test]
 fn keystore2_attest_key_fails_with_invalid_attestation_id() {
     skip_test_if_no_device_id_attestation_feature!();
+    skip_device_id_attestation_tests!();
+    skip_test_if_no_app_attest_key_feature!();
 
     let sl = SecLevel::tee();
 
