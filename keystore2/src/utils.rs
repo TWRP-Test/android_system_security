@@ -522,7 +522,7 @@ fn merge_and_filter_key_entry_lists(
     result
 }
 
-fn estimate_safe_amount_to_return(
+pub(crate) fn estimate_safe_amount_to_return(
     domain: Domain,
     namespace: i64,
     key_descriptors: &[KeyDescriptor],
@@ -560,6 +560,9 @@ fn estimate_safe_amount_to_return(
     items_to_return
 }
 
+/// Estimate for maximum size of a Binder response in bytes.
+pub(crate) const RESPONSE_SIZE_LIMIT: usize = 358400;
+
 /// List all key aliases for a given domain + namespace. whose alias is greater
 /// than start_past_alias (if provided).
 pub fn list_key_entries(
@@ -583,7 +586,6 @@ pub fn list_key_entries(
         start_past_alias,
     );
 
-    const RESPONSE_SIZE_LIMIT: usize = 358400;
     let safe_amount_to_return =
         estimate_safe_amount_to_return(domain, namespace, &merged_key_entries, RESPONSE_SIZE_LIMIT);
     Ok(merged_key_entries[..safe_amount_to_return].to_vec())

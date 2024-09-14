@@ -520,18 +520,6 @@ fn check_common_auths(
         }
     ));
 
-    // Access denied for finding vendor-patch-level ("ro.vendor.build.security_patch") property
-    // in a test running with `untrusted_app` context. Keeping this check to verify
-    // vendor-patch-level in tests running with `su` context.
-    if getuid().is_root() {
-        assert!(check_key_param(
-            authorizations,
-            &KeyParameter {
-                tag: Tag::VENDOR_PATCHLEVEL,
-                value: KeyParameterValue::Integer(get_vendor_patchlevel().try_into().unwrap())
-            }
-        ));
-    }
     assert!(check_key_param(
         authorizations,
         &KeyParameter { tag: Tag::ORIGIN, value: KeyParameterValue::Origin(expected_key_origin) }
@@ -553,6 +541,22 @@ fn check_common_auths(
             .iter()
             .map(|auth| &auth.keyParameter)
             .any(|key_param| key_param.tag == Tag::CREATION_DATETIME));
+
+        // Access denied for finding vendor-patch-level ("ro.vendor.build.security_patch") property
+        // in a test running with `untrusted_app` context. Keeping this check to verify
+        // vendor-patch-level in tests running with `su` context.
+        if getuid().is_root() {
+            // Keymaster implementations may not consistently include `Tag::VENDOR_PATCHLEVEL`
+            // in generated key characteristics. So, checking this if the underlying device is a
+            // KeyMint implementation.
+            assert!(check_key_param(
+                authorizations,
+                &KeyParameter {
+                    tag: Tag::VENDOR_PATCHLEVEL,
+                    value: KeyParameterValue::Integer(get_vendor_patchlevel().try_into().unwrap())
+                }
+            ));
+        }
     }
 }
 

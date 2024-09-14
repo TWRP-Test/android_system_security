@@ -28,6 +28,10 @@ use keystore2_test_utils::{
 };
 use nix::unistd::{getuid, Gid, Uid};
 use rustutils::users::AID_USER_OFFSET;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
 use std::thread;
 use std::thread::JoinHandle;
 
@@ -460,4 +464,121 @@ fn keystore2_op_fails_operation_busy() {
     let result2 = th_handle_2.join().unwrap();
 
     assert!(result1 || result2);
+}
+
+/// Create an operation and use it for performing sign operation. After completing the operation
+/// try to abort the operation. Test should fail to abort already finalized operation with error
+/// code `INVALID_OPERATION_HANDLE`.
+#[test]
+fn keystore2_abort_finalized_op_fail_test() {
+    let op_response = create_signing_operation(
+        ForcedOp(false),
+        KeyPurpose::SIGN,
+        Digest::SHA_2_256,
+        Domain::APP,
+        -1,
+        Some("ks_op_abort_fail_test_key".to_string()),
+    )
+    .unwrap();
+
+    let op: binder::Strong<dyn IKeystoreOperation> = op_response.iOperation.unwrap();
+    perform_sample_sign_operation(&op).unwrap();
+    let result = key_generations::map_ks_error(op.abort());
+    assert!(result.is_err());
+    assert_eq!(Error::Km(ErrorCode::INVALID_OPERATION_HANDLE), result.unwrap_err());
+}
+
+/// Create an operation and use it for performing sign operation. Before finishing the operation
+/// try to abort the operation. Test should successfully abort the operation. After aborting try to
+/// use the operation handle, test should fail to use already aborted operation handle with error
+/// code `INVALID_OPERATION_HANDLE`.
+#[test]
+fn keystore2_op_abort_success_test() {
+    let op_response = create_signing_operation(
+        ForcedOp(false),
+        KeyPurpose::SIGN,
+        Digest::SHA_2_256,
+        Domain::APP,
+        -1,
+        Some("ks_op_abort_success_key".to_string()),
+    )
+    .unwrap();
+
+    let op: binder::Strong<dyn IKeystoreOperation> = op_response.iOperation.unwrap();
+    op.update(b"my message").unwrap();
+    let result = key_generations::map_ks_error(op.abort());
+    assert!(result.is_ok());
+
+    // Try to use the op handle after abort.
+    let result = key_generations::map_ks_error(op.finish(None, None));
+    assert!(result.is_err());
+    assert_eq!(Error::Km(ErrorCode::INVALID_OPERATION_HANDLE), result.unwrap_err());
+}
+
+/// Executes an operation in a thread. Performs an `update` operation repeatedly till the user
+/// interrupts it or encounters any error other than `OPERATION_BUSY`.
+/// Return `false` in case of any error other than `OPERATION_BUSY`, otherwise it returns true.
+fn perform_abort_op_busy_in_thread(
+    op: binder::Strong<dyn IKeystoreOperation>,
+    should_exit_clone: Arc<AtomicBool>,
+) -> JoinHandle<bool> {
+    thread::spawn(move || {
+        loop {
+            if should_exit_clone.load(Ordering::Relaxed) {
+                // Caller requested to exit the thread.
+                return true;
+            }
+
+            match key_generations::map_ks_error(op.update(b"my message")) {
+                Ok(_) => continue,
+                Err(Error::Rc(ResponseCode::OPERATION_BUSY)) => continue,
+                Err(_) => return false,
+            }
+        }
+    })
+}
+
+/// Create an operation and try to use same operation handle in multiple threads to perform
+/// operations. Test tries to abort the operation and expects `abort` call to fail with the error
+/// response `OPERATION_BUSY` as multiple threads try to access the same operation handle
+/// simultaneously. Test tries to simulate `OPERATION_BUSY` error response from `abort` api.
+#[test]
+fn keystore2_op_abort_fails_with_operation_busy_error_test() {
+    loop {
+        let op_response = create_signing_operation(
+            ForcedOp(false),
+            KeyPurpose::SIGN,
+            Digest::SHA_2_256,
+            Domain::APP,
+            -1,
+            Some("op_abort_busy_alias_test_key".to_string()),
+        )
+        .unwrap();
+        let op: binder::Strong<dyn IKeystoreOperation> = op_response.iOperation.unwrap();
+
+        let should_exit = Arc::new(AtomicBool::new(false));
+
+        let update_t_handle1 = perform_abort_op_busy_in_thread(op.clone(), should_exit.clone());
+        let update_t_handle2 = perform_abort_op_busy_in_thread(op.clone(), should_exit.clone());
+
+        // Attempt to abort the operation and anticipate an 'OPERATION_BUSY' error, as multiple
+        // threads are concurrently accessing the same operation handle.
+        let result = match op.abort() {
+            Ok(_) => 0, // Operation successfully aborted.
+            Err(e) => e.service_specific_error(),
+        };
+
+        // Notify threads to stop performing `update` operation.
+        should_exit.store(true, Ordering::Relaxed);
+
+        let _update_op_result = update_t_handle1.join().unwrap();
+        let _update_op_result2 = update_t_handle2.join().unwrap();
+
+        if result == ResponseCode::OPERATION_BUSY.0 {
+            // The abort call failed with an OPERATION_BUSY error, as anticipated, due to multiple
+            // threads competing for access to the same operation handle.
+            return;
+        }
+        assert_eq!(result, 0);
+    }
 }

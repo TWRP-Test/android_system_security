@@ -113,6 +113,7 @@ rust_test {
         "liblibsqlite3_sys",
         "libnix",
         "librusqlite",
+        "libtempfile",
     ],
     // The test should always include watchdog.
     features: [

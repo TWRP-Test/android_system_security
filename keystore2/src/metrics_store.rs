@@ -516,7 +516,7 @@ fn compute_purpose_bitmap(purpose_bitmap: &mut i32, purpose: KeyPurpose) {
     }
 }
 
-fn pull_storage_stats() -> Result<Vec<KeystoreAtom>> {
+pub(crate) fn pull_storage_stats() -> Result<Vec<KeystoreAtom>> {
     let mut atom_vec: Vec<KeystoreAtom> = Vec::new();
     let mut append = |stat| {
         match stat {

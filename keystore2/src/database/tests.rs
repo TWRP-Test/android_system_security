@@ -42,7 +42,11 @@ use crate::utils::AesGcm;
 use std::time::Instant;
 
 pub fn new_test_db() -> Result<KeystoreDB> {
-    let conn = KeystoreDB::make_connection("file::memory:")?;
+    new_test_db_at("file::memory:")
+}
+
+fn new_test_db_at(path: &str) -> Result<KeystoreDB> {
+    let conn = KeystoreDB::make_connection(path)?;
 
     let mut db = KeystoreDB { conn, gc: None, perboot: Arc::new(perboot::PerbootDB::new()) };
     db.with_transaction(Immediate("TX_new_test_db"), |tx| {
@@ -2411,6 +2415,81 @@ fn find_auth_token_entry_returns_latest() -> Result<()> {
     Ok(())
 }
 
+fn blob_count(db: &mut KeystoreDB, sc_type: SubComponentType) -> usize {
+    db.with_transaction(TransactionBehavior::Deferred, |tx| {
+        tx.query_row(
+            "SELECT COUNT(*) FROM persistent.blobentry
+                     WHERE subcomponent_type = ?;",
+            params![sc_type],
+            |row| row.get(0),
+        )
+        .context(ks_err!("Failed to count number of {sc_type:?} blobs"))
+        .no_gc()
+    })
+    .unwrap()
+}
+
+#[test]
+fn test_blobentry_gc() -> Result<()> {
+    let mut db = new_test_db()?;
+    let _key_id1 = make_test_key_entry(&mut db, Domain::APP, 1, "key1", None)?.0;
+    let key_guard2 = make_test_key_entry(&mut db, Domain::APP, 2, "key2", None)?;
+    let key_guard3 = make_test_key_entry(&mut db, Domain::APP, 3, "key3", None)?;
+    let key_id4 = make_test_key_entry(&mut db, Domain::APP, 4, "key4", None)?.0;
+    let key_id5 = make_test_key_entry(&mut db, Domain::APP, 5, "key5", None)?.0;
+
+    assert_eq!(5, blob_count(&mut db, SubComponentType::KEY_BLOB));
+    assert_eq!(5, blob_count(&mut db, SubComponentType::CERT));
+    assert_eq!(5, blob_count(&mut db, SubComponentType::CERT_CHAIN));
+
+    // Replace the keyblobs for keys 2 and 3.  The previous blobs will still exist.
+    db.set_blob(&key_guard2, SubComponentType::KEY_BLOB, Some(&[1, 2, 3]), None)?;
+    db.set_blob(&key_guard3, SubComponentType::KEY_BLOB, Some(&[1, 2, 3]), None)?;
+
+    assert_eq!(7, blob_count(&mut db, SubComponentType::KEY_BLOB));
+    assert_eq!(5, blob_count(&mut db, SubComponentType::CERT));
+    assert_eq!(5, blob_count(&mut db, SubComponentType::CERT_CHAIN));
+
+    // Delete keys 4 and 5.  The keyblobs aren't removed yet.
+    db.with_transaction(Immediate("TX_delete_test_keys"), |tx| {
+        KeystoreDB::mark_unreferenced(tx, key_id4)?;
+        KeystoreDB::mark_unreferenced(tx, key_id5)?;
+        Ok(()).no_gc()
+    })
+    .unwrap();
+
+    assert_eq!(7, blob_count(&mut db, SubComponentType::KEY_BLOB));
+    assert_eq!(5, blob_count(&mut db, SubComponentType::CERT));
+    assert_eq!(5, blob_count(&mut db, SubComponentType::CERT_CHAIN));
+
+    // First garbage collection should return all 4 blobentry rows that are no longer current for
+    // their key.
+    let superseded = db.handle_next_superseded_blobs(&[], 20).unwrap();
+    let superseded_ids: Vec<i64> = superseded.iter().map(|v| v.blob_id).collect();
+    assert_eq!(4, superseded.len());
+    assert_eq!(7, blob_count(&mut db, SubComponentType::KEY_BLOB));
+    assert_eq!(5, blob_count(&mut db, SubComponentType::CERT));
+    assert_eq!(5, blob_count(&mut db, SubComponentType::CERT_CHAIN));
+
+    // Feed the superseded blob IDs back in, to trigger removal of the old KEY_BLOB entries.  As no
+    // new superseded KEY_BLOBs are found, the unreferenced CERT/CERT_CHAIN blobs are removed.
+    let superseded = db.handle_next_superseded_blobs(&superseded_ids, 20).unwrap();
+    let superseded_ids: Vec<i64> = superseded.iter().map(|v| v.blob_id).collect();
+    assert_eq!(0, superseded.len());
+    assert_eq!(3, blob_count(&mut db, SubComponentType::KEY_BLOB));
+    assert_eq!(3, blob_count(&mut db, SubComponentType::CERT));
+    assert_eq!(3, blob_count(&mut db, SubComponentType::CERT_CHAIN));
+
+    // Nothing left to garbage collect.
+    let superseded = db.handle_next_superseded_blobs(&superseded_ids, 20).unwrap();
+    assert_eq!(0, superseded.len());
+    assert_eq!(3, blob_count(&mut db, SubComponentType::KEY_BLOB));
+    assert_eq!(3, blob_count(&mut db, SubComponentType::CERT));
+    assert_eq!(3, blob_count(&mut db, SubComponentType::CERT_CHAIN));
+
+    Ok(())
+}
+
 #[test]
 fn test_load_key_descriptor() -> Result<()> {
     let mut db = new_test_db()?;
@@ -2525,4 +2604,152 @@ fn test_get_list_app_uids_with_multiple_sids() -> Result<()> {
     let third_sid_apps = db.get_app_uids_affected_by_sid(uid, third_sid)?;
     assert_eq!(third_sid_apps, vec![second_app_id]);
     Ok(())
+}
+
+// Starting from `next_keyid`, add keys to the database until the count reaches
+// `key_count`.  (`next_keyid` is assumed to indicate how many rows already exist.)
+fn db_populate_keys(db: &mut KeystoreDB, next_keyid: usize, key_count: usize) {
+    db.with_transaction(Immediate("test_keyentry"), |tx| {
+        for next_keyid in next_keyid..key_count {
+            tx.execute(
+                "INSERT into persistent.keyentry
+                        (id, key_type, domain, namespace, alias, state, km_uuid)
+                        VALUES(?, ?, ?, ?, ?, ?, ?);",
+                params![
+                    next_keyid,
+                    KeyType::Client,
+                    Domain::APP.0 as u32,
+                    10001,
+                    &format!("alias-{next_keyid}"),
+                    KeyLifeCycle::Live,
+                    KEYSTORE_UUID,
+                ],
+            )?;
+            tx.execute(
+                "INSERT INTO persistent.blobentry
+                         (subcomponent_type, keyentryid, blob) VALUES (?, ?, ?);",
+                params![SubComponentType::KEY_BLOB, next_keyid, TEST_KEY_BLOB],
+            )?;
+            tx.execute(
+                "INSERT INTO persistent.blobentry
+                         (subcomponent_type, keyentryid, blob) VALUES (?, ?, ?);",
+                params![SubComponentType::CERT, next_keyid, TEST_CERT_BLOB],
+            )?;
+            tx.execute(
+                "INSERT INTO persistent.blobentry
+                         (subcomponent_type, keyentryid, blob) VALUES (?, ?, ?);",
+                params![SubComponentType::CERT_CHAIN, next_keyid, TEST_CERT_CHAIN_BLOB],
+            )?;
+        }
+        Ok(()).no_gc()
+    })
+    .unwrap()
+}
+
+/// Run the provided `test_fn` against the database at various increasing stages of
+/// database population.
+fn run_with_many_keys<F, T>(max_count: usize, test_fn: F) -> Result<()>
+where
+    F: Fn(&mut KeystoreDB) -> T,
+{
+    android_logger::init_once(
+        android_logger::Config::default()
+            .with_tag("keystore2_test")
+            .with_max_level(log::LevelFilter::Debug),
+    );
+    // Put the test database on disk for a more realistic result.
+    let db_root = tempfile::Builder::new().prefix("ks2db-test-").tempdir().unwrap();
+    let mut db_path = db_root.path().to_owned();
+    db_path.push("ks2-test.sqlite");
+    let mut db = new_test_db_at(&db_path.to_string_lossy())?;
+
+    println!("\nNumber_of_keys,time_in_s");
+    let mut key_count = 10;
+    let mut next_keyid = 0;
+    while key_count < max_count {
+        db_populate_keys(&mut db, next_keyid, key_count);
+        assert_eq!(db_key_count(&mut db), key_count);
+
+        let start = std::time::Instant::now();
+        let _result = test_fn(&mut db);
+        println!("{key_count}, {}", start.elapsed().as_secs_f64());
+
+        next_keyid = key_count;
+        key_count *= 2;
+    }
+
+    Ok(())
+}
+
+fn db_key_count(db: &mut KeystoreDB) -> usize {
+    db.with_transaction(TransactionBehavior::Deferred, |tx| {
+        tx.query_row(
+            "SELECT COUNT(*) FROM persistent.keyentry
+                         WHERE domain = ? AND state = ? AND key_type = ?;",
+            params![Domain::APP.0 as u32, KeyLifeCycle::Live, KeyType::Client],
+            |row| row.get::<usize, usize>(0),
+        )
+        .context(ks_err!("Failed to count number of keys."))
+        .no_gc()
+    })
+    .unwrap()
+}
+
+#[test]
+fn test_handle_superseded_with_many_keys() -> Result<()> {
+    run_with_many_keys(1_000_000, |db| db.handle_next_superseded_blobs(&[], 20))
+}
+
+#[test]
+fn test_get_storage_stats_with_many_keys() -> Result<()> {
+    use android_security_metrics::aidl::android::security::metrics::Storage::Storage as MetricsStorage;
+    run_with_many_keys(1_000_000, |db| {
+        db.get_storage_stat(MetricsStorage::DATABASE).unwrap();
+        db.get_storage_stat(MetricsStorage::KEY_ENTRY).unwrap();
+        db.get_storage_stat(MetricsStorage::KEY_ENTRY_ID_INDEX).unwrap();
+        db.get_storage_stat(MetricsStorage::KEY_ENTRY_DOMAIN_NAMESPACE_INDEX).unwrap();
+        db.get_storage_stat(MetricsStorage::BLOB_ENTRY).unwrap();
+        db.get_storage_stat(MetricsStorage::BLOB_ENTRY_KEY_ENTRY_ID_INDEX).unwrap();
+        db.get_storage_stat(MetricsStorage::KEY_PARAMETER).unwrap();
+        db.get_storage_stat(MetricsStorage::KEY_PARAMETER_KEY_ENTRY_ID_INDEX).unwrap();
+        db.get_storage_stat(MetricsStorage::KEY_METADATA).unwrap();
+        db.get_storage_stat(MetricsStorage::KEY_METADATA_KEY_ENTRY_ID_INDEX).unwrap();
+        db.get_storage_stat(MetricsStorage::GRANT).unwrap();
+        db.get_storage_stat(MetricsStorage::AUTH_TOKEN).unwrap();
+        db.get_storage_stat(MetricsStorage::BLOB_METADATA).unwrap();
+        db.get_storage_stat(MetricsStorage::BLOB_METADATA_BLOB_ENTRY_ID_INDEX).unwrap();
+    })
+}
+
+#[test]
+fn test_list_keys_with_many_keys() -> Result<()> {
+    run_with_many_keys(1_000_000, |db: &mut KeystoreDB| -> Result<()> {
+        // Behave equivalently to how clients list aliases.
+        let domain = Domain::APP;
+        let namespace = 10001;
+        let mut start_past: Option<String> = None;
+        let mut count = 0;
+        let mut batches = 0;
+        loop {
+            let keys = db
+                .list_past_alias(domain, namespace, KeyType::Client, start_past.as_deref())
+                .unwrap();
+            let batch_size = crate::utils::estimate_safe_amount_to_return(
+                domain,
+                namespace,
+                &keys,
+                crate::utils::RESPONSE_SIZE_LIMIT,
+            );
+            let batch = &keys[..batch_size];
+            count += batch.len();
+            match batch.last() {
+                Some(key) => start_past.clone_from(&key.alias),
+                None => {
+                    log::info!("got {count} keys in {batches} non-empty batches");
+                    return Ok(());
+                }
+            }
+            batches += 1;
+        }
+    })
 }
