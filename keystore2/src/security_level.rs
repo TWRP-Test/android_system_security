@@ -49,7 +49,7 @@ use crate::{
 };
 use crate::{globals::get_keymint_device, id_rotation::IdRotationState};
 use android_hardware_security_keymint::aidl::android::hardware::security::keymint::{
-    Algorithm::Algorithm, AttestationKey::AttestationKey,
+    Algorithm::Algorithm, AttestationKey::AttestationKey, Certificate::Certificate,
     HardwareAuthenticatorType::HardwareAuthenticatorType, IKeyMintDevice::IKeyMintDevice,
     KeyCreationResult::KeyCreationResult, KeyFormat::KeyFormat,
     KeyMintHardwareInfo::KeyMintHardwareInfo, KeyParameter::KeyParameter,
@@ -131,11 +131,21 @@ impl KeystoreSecurityLevel {
             certificateChain: mut certificate_chain,
         } = creation_result;
 
+        // Unify the possible contents of the certificate chain.  The first entry in the `Vec` is
+        // always the leaf certificate (if present), but the rest of the chain may be present as
+        // either:
+        //  - `certificate_chain[1..n]`: each entry holds a single certificate, as returned by
+        //    KeyMint, or
+        //  - `certificate[1`]: a single `Certificate` from RKP that actually (and confusingly)
+        //    holds the DER-encoded certs of the chain concatenated together.
         let mut cert_info: CertificateInfo = CertificateInfo::new(
+            // Leaf is always a single cert in the first entry, if present.
             match certificate_chain.len() {
                 0 => None,
                 _ => Some(certificate_chain.remove(0).encodedCertificate),
             },
+            // Remainder may be either `[1..n]` individual certs, or just `[1]` holding a
+            // concatenated chain. Convert the former to the latter.
             match certificate_chain.len() {
                 0 => None,
                 _ => Some(
@@ -622,7 +632,14 @@ impl KeystoreSecurityLevel {
                     log_security_safe_params(&params)
                 ))
                 .map(|(mut result, _)| {
-                    result.certificateChain.push(attestation_certs);
+                    // The `certificateChain` in a `KeyCreationResult` should normally have one
+                    // `Certificate` for each certificate in the chain. To avoid having to
+                    // unnecessarily parse the RKP chain (which is concatenated DER-encoded certs),
+                    // stuff the whole concatenated chain into a single `Certificate`.
+                    // This is untangled by `store_new_key()`.
+                    result
+                        .certificateChain
+                        .push(Certificate { encodedCertificate: attestation_certs });
                     result
                 })
             }

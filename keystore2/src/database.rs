@@ -1113,7 +1113,7 @@ impl KeystoreDB {
         )
     }
 
-    /// Fetches a storage statisitics atom for a given storage type. For storage
+    /// Fetches a storage statistics atom for a given storage type. For storage
     /// types that map to a table, information about the table's storage is
     /// returned. Requests for storage types that are not DB tables return None.
     pub fn get_storage_stat(&mut self, storage_type: MetricsStorage) -> Result<StorageStats> {

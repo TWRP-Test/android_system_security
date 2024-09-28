@@ -633,8 +633,8 @@ fn keystore2_gen_key_auth_include_unique_id_success() {
     }
 }
 
-/// Generate a key with `APPLICATION_DATA`. Test should create an operation using the
-/// same `APPLICATION_DATA` successfully.
+/// Generate a key with `APPLICATION_DATA` and `APPLICATION_ID`. Test should create an operation
+/// successfully using the same `APPLICATION_DATA` and `APPLICATION_ID`.
 #[test]
 fn keystore2_gen_key_auth_app_data_test_success() {
     let sl = SecLevel::tee();
@@ -646,7 +646,8 @@ fn keystore2_gen_key_auth_app_data_test_success() {
         .purpose(KeyPurpose::VERIFY)
         .digest(Digest::SHA_2_256)
         .ec_curve(EcCurve::P_256)
-        .app_data(b"app-data".to_vec());
+        .app_data(b"app-data".to_vec())
+        .app_id(b"app-id".to_vec());
 
     let alias = "ks_test_auth_tags_test";
     let result = key_generations::create_key_and_operation(
@@ -655,16 +656,17 @@ fn keystore2_gen_key_auth_app_data_test_success() {
         &authorizations::AuthSetBuilder::new()
             .purpose(KeyPurpose::SIGN)
             .digest(Digest::SHA_2_256)
-            .app_data(b"app-data".to_vec()),
+            .app_data(b"app-data".to_vec())
+            .app_id(b"app-id".to_vec()),
         alias,
     );
     assert!(result.is_ok());
     delete_app_key(&sl.keystore2, alias).unwrap();
 }
 
-/// Generate a key with `APPLICATION_DATA`. Try to create an operation using the
-/// different `APPLICATION_DATA`, test should fail to create an operation with error code
-/// `INVALID_KEY_BLOB`.
+/// Generate a key with `APPLICATION_DATA` and `APPLICATION_ID`. Try to create an operation using
+/// the different `APPLICATION_DATA` and `APPLICATION_ID`, test should fail to create an operation
+/// with error code `INVALID_KEY_BLOB`.
 #[test]
 fn keystore2_gen_key_auth_app_data_test_fail() {
     let sl = SecLevel::tee();
@@ -676,7 +678,8 @@ fn keystore2_gen_key_auth_app_data_test_fail() {
         .purpose(KeyPurpose::VERIFY)
         .digest(Digest::SHA_2_256)
         .ec_curve(EcCurve::P_256)
-        .app_data(b"app-data".to_vec());
+        .app_data(b"app-data".to_vec())
+        .app_id(b"app-id".to_vec());
 
     let alias = "ks_test_auth_tags_test";
     let result = key_generations::map_ks_error(key_generations::create_key_and_operation(
@@ -685,7 +688,8 @@ fn keystore2_gen_key_auth_app_data_test_fail() {
         &authorizations::AuthSetBuilder::new()
             .purpose(KeyPurpose::SIGN)
             .digest(Digest::SHA_2_256)
-            .app_data(b"invalid-app-data".to_vec()),
+            .app_data(b"invalid-app-data".to_vec())
+            .app_id(b"invalid-app-id".to_vec()),
         alias,
     ));
     assert!(result.is_err());

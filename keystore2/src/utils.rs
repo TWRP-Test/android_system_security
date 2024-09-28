@@ -38,6 +38,7 @@ use android_security_apc::aidl::android::security::apc::{
 };
 use android_system_keystore2::aidl::android::system::keystore2::{
     Authorization::Authorization, Domain::Domain, KeyDescriptor::KeyDescriptor,
+    ResponseCode::ResponseCode,
 };
 use anyhow::{Context, Result};
 use binder::{FromIBinder, StatusCode, Strong, ThreadState};
@@ -125,14 +126,20 @@ pub fn is_device_id_attestation_tag(tag: Tag) -> bool {
 /// identifiers. It throws an error if the permissions cannot be verified or if the caller doesn't
 /// have the right permissions. Otherwise it returns silently.
 pub fn check_device_attestation_permissions() -> anyhow::Result<()> {
-    check_android_permission("android.permission.READ_PRIVILEGED_PHONE_STATE")
+    check_android_permission(
+        "android.permission.READ_PRIVILEGED_PHONE_STATE",
+        Error::Km(ErrorCode::CANNOT_ATTEST_IDS),
+    )
 }
 
 /// This function checks whether the calling app has the Android permissions needed to attest the
 /// device-unique identifier. It throws an error if the permissions cannot be verified or if the
 /// caller doesn't have the right permissions. Otherwise it returns silently.
 pub fn check_unique_id_attestation_permissions() -> anyhow::Result<()> {
-    check_android_permission("android.permission.REQUEST_UNIQUE_ID_ATTESTATION")
+    check_android_permission(
+        "android.permission.REQUEST_UNIQUE_ID_ATTESTATION",
+        Error::Km(ErrorCode::CANNOT_ATTEST_IDS),
+    )
 }
 
 /// This function checks whether the calling app has the Android permissions needed to manage
@@ -141,10 +148,19 @@ pub fn check_unique_id_attestation_permissions() -> anyhow::Result<()> {
 /// It throws an error if the permissions cannot be verified or if the caller doesn't
 /// have the right permissions. Otherwise it returns silently.
 pub fn check_get_app_uids_affected_by_sid_permissions() -> anyhow::Result<()> {
-    check_android_permission("android.permission.MANAGE_USERS")
+    check_android_permission(
+        "android.permission.MANAGE_USERS",
+        Error::Km(ErrorCode::CANNOT_ATTEST_IDS),
+    )
 }
 
-fn check_android_permission(permission: &str) -> anyhow::Result<()> {
+/// This function checks whether the calling app has the Android permission needed to dump
+/// Keystore state to logcat.
+pub fn check_dump_permission() -> anyhow::Result<()> {
+    check_android_permission("android.permission.DUMP", Error::Rc(ResponseCode::PERMISSION_DENIED))
+}
+
+fn check_android_permission(permission: &str, err: Error) -> anyhow::Result<()> {
     let permission_controller: Strong<dyn IPermissionController::IPermissionController> =
         binder::get_interface("permission")?;
 
@@ -160,8 +176,7 @@ fn check_android_permission(permission: &str) -> anyhow::Result<()> {
         map_binder_status(binder_result).context(ks_err!("checkPermission failed"))?;
     match has_permissions {
         true => Ok(()),
-        false => Err(Error::Km(ErrorCode::CANNOT_ATTEST_IDS))
-            .context(ks_err!("caller does not have the permission to attest device IDs")),
+        false => Err(err).context(ks_err!("caller does not have the '{permission}' permission")),
     }
 }
 

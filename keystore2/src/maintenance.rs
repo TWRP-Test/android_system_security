@@ -24,7 +24,7 @@ use crate::ks_err;
 use crate::permission::{KeyPerm, KeystorePerm};
 use crate::super_key::SuperKeyManager;
 use crate::utils::{
-    check_get_app_uids_affected_by_sid_permissions, check_key_permission,
+    check_dump_permission, check_get_app_uids_affected_by_sid_permissions, check_key_permission,
     check_keystore_permission, uid_to_android_user, watchdog as wd,
 };
 use android_hardware_security_keymint::aidl::android::hardware::security::keymint::{
@@ -35,6 +35,9 @@ use android_security_maintenance::aidl::android::security::maintenance::IKeystor
 };
 use android_security_maintenance::binder::{
     BinderFeatures, Interface, Result as BinderResult, Strong, ThreadState,
+};
+use android_security_metrics::aidl::android::security::metrics::{
+    KeystoreAtomPayload::KeystoreAtomPayload::StorageStats
 };
 use android_system_keystore2::aidl::android::system::keystore2::KeyDescriptor::KeyDescriptor;
 use android_system_keystore2::aidl::android::system::keystore2::ResponseCode::ResponseCode;
@@ -264,9 +267,84 @@ impl Maintenance {
         DB.with(|db| db.borrow_mut().get_app_uids_affected_by_sid(user_id, secure_user_id))
             .context(ks_err!("Failed to get app UIDs affected by SID"))
     }
+
+    fn dump_state(&self, f: &mut dyn std::io::Write) -> std::io::Result<()> {
+        writeln!(f, "keystore2 running")?;
+        writeln!(f)?;
+
+        // Display underlying device information
+        for sec_level in &[SecurityLevel::TRUSTED_ENVIRONMENT, SecurityLevel::STRONGBOX] {
+            let Ok((_dev, hw_info, uuid)) = get_keymint_device(sec_level) else { continue };
+
+            writeln!(f, "Device info for {sec_level:?} with {uuid:?}")?;
+            writeln!(f, "  HAL version:              {}", hw_info.versionNumber)?;
+            writeln!(f, "  Implementation name:      {}", hw_info.keyMintName)?;
+            writeln!(f, "  Implementation author:    {}", hw_info.keyMintAuthorName)?;
+            writeln!(f, "  Timestamp token required: {}", hw_info.timestampTokenRequired)?;
+        }
+        writeln!(f)?;
+
+        // Display database size information.
+        match crate::metrics_store::pull_storage_stats() {
+            Ok(atoms) => {
+                writeln!(f, "Database size information (in bytes):")?;
+                for atom in atoms {
+                    if let StorageStats(stats) = &atom.payload {
+                        let stype = format!("{:?}", stats.storage_type);
+                        if stats.unused_size == 0 {
+                            writeln!(f, "  {:<40}: {:>12}", stype, stats.size)?;
+                        } else {
+                            writeln!(
+                                f,
+                                "  {:<40}: {:>12} (unused {})",
+                                stype, stats.size, stats.unused_size
+                            )?;
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                writeln!(f, "Failed to retrieve storage stats: {e:?}")?;
+            }
+        }
+        writeln!(f)?;
+
+        // Display accumulated metrics.
+        writeln!(f, "Metrics information:")?;
+        writeln!(f)?;
+        write!(f, "{:?}", *crate::metrics_store::METRICS_STORE)?;
+        writeln!(f)?;
+
+        // Reminder: any additional information added to the `dump_state()` output needs to be
+        // careful not to include confidential information (e.g. key material).
+
+        Ok(())
+    }
 }
 
-impl Interface for Maintenance {}
+impl Interface for Maintenance {
+    fn dump(
+        &self,
+        f: &mut dyn std::io::Write,
+        _args: &[&std::ffi::CStr],
+    ) -> Result<(), binder::StatusCode> {
+        if !keystore2_flags::enable_dump() {
+            log::info!("skipping dump() as flag not enabled");
+            return Ok(());
+        }
+        log::info!("dump()");
+        let _wp = wd::watch("IKeystoreMaintenance::dump");
+        check_dump_permission().map_err(|_e| {
+            log::error!("dump permission denied");
+            binder::StatusCode::PERMISSION_DENIED
+        })?;
+
+        self.dump_state(f).map_err(|e| {
+            log::error!("dump_state failed: {e:?}");
+            binder::StatusCode::UNKNOWN_ERROR
+        })
+    }
+}
 
 impl IKeystoreMaintenance for Maintenance {
     fn onUserAdded(&self, user_id: i32) -> BinderResult<()> {
