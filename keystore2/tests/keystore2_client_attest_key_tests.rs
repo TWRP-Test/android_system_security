@@ -615,6 +615,8 @@ fn keystore2_attest_key_without_attestation_id_support_fails_with_cannot_attest_
         // Skip this test on device supporting `DEVICE_ID_ATTESTATION_FEATURE`.
         return;
     }
+    skip_device_id_attestation_tests!();
+    skip_test_if_no_app_attest_key_feature!();
 
     let sl = SecLevel::tee();
 
