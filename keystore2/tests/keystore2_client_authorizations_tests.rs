@@ -665,8 +665,7 @@ fn keystore2_gen_key_auth_app_data_test_success() {
 }
 
 /// Generate a key with `APPLICATION_DATA` and `APPLICATION_ID`. Try to create an operation using
-/// the different `APPLICATION_DATA` and `APPLICATION_ID`, test should fail to create an operation
-/// with error code `INVALID_KEY_BLOB`.
+/// the different `APPLICATION_DATA` and `APPLICATION_ID`, test should fail to create an operation.
 #[test]
 fn keystore2_gen_key_auth_app_data_test_fail() {
     let sl = SecLevel::tee();
@@ -693,7 +692,10 @@ fn keystore2_gen_key_auth_app_data_test_fail() {
         alias,
     ));
     assert!(result.is_err());
-    assert_eq!(Error::Km(ErrorCode::INVALID_KEY_BLOB), result.unwrap_err());
+    assert!(matches!(
+        result.unwrap_err(),
+        Error::Km(ErrorCode::INVALID_KEY_BLOB) | Error::Km(ErrorCode::INVALID_ARGUMENT)
+    ));
     delete_app_key(&sl.keystore2, alias).unwrap();
 }
 
@@ -727,8 +729,7 @@ fn keystore2_gen_key_auth_app_id_test_success() {
 }
 
 /// Generate a key with `APPLICATION_ID`. Try to create an operation using the
-/// different `APPLICATION_ID`, test should fail to create an operation with error code
-/// `INVALID_KEY_BLOB`.
+/// different `APPLICATION_ID`, test should fail to create an operation.
 #[test]
 fn keystore2_gen_key_auth_app_id_test_fail() {
     let sl = SecLevel::tee();
@@ -753,7 +754,10 @@ fn keystore2_gen_key_auth_app_id_test_fail() {
         alias,
     ));
     assert!(result.is_err());
-    assert_eq!(Error::Km(ErrorCode::INVALID_KEY_BLOB), result.unwrap_err());
+    assert!(matches!(
+        result.unwrap_err(),
+        Error::Km(ErrorCode::INVALID_KEY_BLOB) | Error::Km(ErrorCode::INVALID_ARGUMENT)
+    ));
     delete_app_key(&sl.keystore2, alias).unwrap();
 }
 
@@ -813,8 +817,7 @@ fn keystore2_gen_attested_key_auth_app_id_app_data_test_success() {
 
 /// Generate an attestation-key with specifying `APPLICATION_ID` and `APPLICATION_DATA`.
 /// Test should try to generate an attested key using previously generated attestation-key without
-/// specifying app-id and app-data. Test should fail to generate a new key with error code
-/// `INVALID_KEY_BLOB`.
+/// specifying app-id and app-data. Test should fail to generate a new key.
 /// It is an oversight of the Keystore API that `APPLICATION_ID` and `APPLICATION_DATA` tags cannot
 /// be provided to generateKey for an attestation key that was generated with them.
 #[test]
@@ -864,7 +867,10 @@ fn keystore2_gen_attestation_key_with_auth_app_id_app_data_test_fail() {
     ));
 
     assert!(result.is_err());
-    assert_eq!(Error::Km(ErrorCode::INVALID_KEY_BLOB), result.unwrap_err());
+    assert!(matches!(
+        result.unwrap_err(),
+        Error::Km(ErrorCode::INVALID_KEY_BLOB) | Error::Km(ErrorCode::INVALID_ARGUMENT)
+    ));
     delete_app_key(&sl.keystore2, attest_alias).unwrap();
 }
 

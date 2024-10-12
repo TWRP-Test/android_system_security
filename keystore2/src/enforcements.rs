@@ -545,8 +545,9 @@ impl Enforcements {
             || (user_auth_type.is_none() && !user_secure_ids.is_empty())
         {
             return Err(Error::Km(Ec::KEY_USER_NOT_AUTHENTICATED)).context(ks_err!(
-                "Auth required, but either auth type or secure ids \
-                 are not present."
+                "Auth required, but auth type {:?} + sids {:?} inconsistently specified",
+                user_auth_type,
+                user_secure_ids,
             ));
         }
 
@@ -582,17 +583,36 @@ impl Enforcements {
                 None => false, // not reachable due to earlier check
             })
             .ok_or(Error::Km(Ec::KEY_USER_NOT_AUTHENTICATED))
-            .context(ks_err!("No suitable auth token found."))?;
+            .context(ks_err!(
+                "No suitable auth token for sids {:?} type {:?} received in last {}s found.",
+                user_secure_ids,
+                user_auth_type,
+                key_time_out
+            ))?;
             let now = BootTime::now();
             let token_age =
                 now.checked_sub(&hat.time_received()).ok_or_else(Error::sys).context(ks_err!(
-                    "Overflow while computing Auth token validity. \
-                Validity cannot be established."
+                    "Overflow while computing Auth token validity. Validity cannot be established."
                 ))?;
 
             if token_age.seconds() > key_time_out {
-                return Err(Error::Km(Ec::KEY_USER_NOT_AUTHENTICATED))
-                    .context(ks_err!("matching auth token is expired."));
+                return Err(Error::Km(Ec::KEY_USER_NOT_AUTHENTICATED)).context(ks_err!(
+                    concat!(
+                        "matching auth token (challenge={}, userId={}, authId={}, ",
+                        "authType={:#x}, timestamp={}ms) rcved={:?} ",
+                        "for sids {:?} type {:?} is expired ({}s old > timeout={}s)"
+                    ),
+                    hat.auth_token().challenge,
+                    hat.auth_token().userId,
+                    hat.auth_token().authenticatorId,
+                    hat.auth_token().authenticatorType.0,
+                    hat.auth_token().timestamp.milliSeconds,
+                    hat.time_received(),
+                    user_secure_ids,
+                    user_auth_type,
+                    token_age.seconds(),
+                    key_time_out
+                ));
             }
             let state = if requires_timestamp {
                 DeferredAuthState::TimeStampRequired(hat.auth_token().clone())
