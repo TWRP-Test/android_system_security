@@ -191,9 +191,9 @@ void selfTestGetCsrV1(std::string_view componentName, IRemotelyProvisionedCompon
         exit(-1);
     }
 
-    auto result = verifyFactoryProtectedData(verifiedDeviceInfo, /*keysToSign=*/{}, keysToSignMac,
-                                             protectedData, *eekChain, eekId,
-                                             hwInfo.supportedEekCurve, irpc, challenge);
+    auto result = verifyFactoryProtectedData(
+        verifiedDeviceInfo, /*keysToSign=*/{}, keysToSignMac, protectedData, *eekChain, eekId,
+        hwInfo.supportedEekCurve, irpc, std::string(componentName), challenge);
 
     if (!result) {
         std::cerr << "Self test failed for IRemotelyProvisionedComponent '" << componentName
@@ -238,8 +238,8 @@ CborResult<cppbor::Array> getCsrV3(std::string_view componentName,
     }
 
     if (selfTest) {
-        auto result =
-            verifyFactoryCsr(/*keysToSign=*/cppbor::Array(), csr, irpc, challenge, allowDegenerate);
+        auto result = verifyFactoryCsr(/*keysToSign=*/cppbor::Array(), csr, irpc,
+                                       std::string(componentName), challenge, allowDegenerate);
         if (!result) {
             std::cerr << "Self test failed for IRemotelyProvisionedComponent '" << componentName
                       << "'. Error message: '" << result.message() << "'." << std::endl;

@@ -123,6 +123,11 @@ rust_test {
     require_root: true,
 }
 
+vintf_fragment {
+    name: "android.system.keystore2-service.xml",
+    src: "android.system.keystore2-service.xml",
+}
+
 rust_defaults {
     name: "keystore2_defaults",
     srcs: ["src/keystore2_main.rs"],
@@ -141,7 +146,7 @@ rust_defaults {
     // selection available in the build system.
     prefer_rlib: true,
 
-    vintf_fragments: ["android.system.keystore2-service.xml"],
+    vintf_fragment_modules: ["android.system.keystore2-service.xml"],
 
     required: ["keystore_cli_v2"],
 }
@@ -168,6 +173,12 @@ aconfig_declarations {
 java_aconfig_library {
     name: "keystore2_flags_java",
     aconfig_declarations: "keystore2_flags",
+}
+
+java_aconfig_library {
+    name: "keystore2_flags_java-host",
+    aconfig_declarations: "keystore2_flags",
+    host_supported: true,
 }
 
 rust_aconfig_library {

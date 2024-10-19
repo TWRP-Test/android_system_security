@@ -51,9 +51,20 @@ pub enum TestOutcome {
     OtherErr,
 }
 
-/// This is used to notify the child or parent process that the expected state is reched.
+/// This is used to notify the child or parent process that the expected state is reached.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct BarrierReached;
+
+/// This is used to notify the child or parent process that the expected state is reached,
+/// passing a value
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct BarrierReachedWithData<T: Send + Sync>(pub T);
+
+impl<T: Send + Sync> BarrierReachedWithData<T> {
+    pub fn new(val: T) -> Self {
+        Self(val)
+    }
+}
 
 /// Forced operation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

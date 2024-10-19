@@ -42,12 +42,14 @@ rust_test {
     test_config: "AndroidTest.xml",
 
     rustlibs: [
+        "android.hardware.gatekeeper-V1-rust",
         "android.hardware.security.secureclock-V1-rust",
         "android.security.authorization-rust",
         "android.security.maintenance-rust",
         "libaconfig_android_hardware_biometrics_rust",
         "libandroid_logger",
         "libandroid_security_flags_rust",
+        "libanyhow",
         "libbinder_rs",
         "libkeystore2_test_utils",
         "liblog_rust",

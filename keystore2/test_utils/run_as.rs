@@ -32,11 +32,103 @@ use nix::unistd::{
     fork, pipe as nix_pipe, read as nix_read, setgid, setuid, write as nix_write, ForkResult, Gid,
     Pid, Uid,
 };
-use serde::{de::DeserializeOwned, Serialize};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::io::{Read, Write};
 use std::marker::PhantomData;
 use std::os::fd::AsRawFd;
 use std::os::fd::OwnedFd;
+
+/// Newtype string error, which can be serialized and transferred out from a sub-process.
+#[derive(Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct Error(pub String);
+
+/// Allow ergonomic use of [`anyhow::Error`].
+impl From<anyhow::Error> for Error {
+    fn from(err: anyhow::Error) -> Self {
+        // Use the debug format of [`anyhow::Error`] to include backtrace.
+        Self(format!("{:?}", err))
+    }
+}
+impl From<String> for Error {
+    fn from(val: String) -> Self {
+        Self(val)
+    }
+}
+impl From<&str> for Error {
+    fn from(val: &str) -> Self {
+        Self(val.to_string())
+    }
+}
+
+impl std::fmt::Display for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl std::error::Error for Error {}
+
+/// Equivalent to the [`assert!`] macro which returns an [`Error`] rather than emitting a panic.
+/// This is useful for test code that is `run_as`, so failures are more accessible.
+#[macro_export]
+macro_rules! expect {
+    ($cond:expr $(,)?) => {{
+        let result = $cond;
+        if !result {
+            return Err($crate::run_as::Error(format!(
+                "{}:{}: check '{}' failed",
+                file!(),
+                line!(),
+                stringify!($cond)
+            )));
+        }
+    }};
+    ($cond:expr, $($arg:tt)+) => {{
+        let result = $cond;
+        if !result {
+            return Err($crate::run_as::Error(format!(
+                "{}:{}: check '{}' failed: {}",
+                file!(),
+                line!(),
+                stringify!($cond),
+                format_args!($($arg)+)
+            )));
+        }
+    }};
+}
+
+/// Equivalent to the [`assert_eq!`] macro which returns an [`Error`] rather than emitting a panic.
+/// This is useful for test code that is `run_as`, so failures are more accessible.
+#[macro_export]
+macro_rules! expect_eq {
+    ($left:expr, $right:expr $(,)?) => {{
+        let left = $left;
+        let right = $right;
+        if left != right {
+            return Err($crate::run_as::Error(format!(
+                "{}:{}: assertion {} == {} failed\n  left: {left:?}\n right: {right:?}\n",
+                file!(),
+                line!(),
+                stringify!($left),
+                stringify!($right),
+            )));
+        }
+    }};
+    ($left:expr, $right:expr, $($arg:tt)+) => {{
+        let left = $left;
+        let right = $right;
+        if left != right {
+            return Err($crate::run_as::Error(format!(
+                "{}:{}: assertion {} == {} failed: {}\n  left: {left:?}\n right: {right:?}\n",
+                file!(),
+                line!(),
+                stringify!($left),
+                stringify!($right),
+                format_args!($($arg)+)
+            )));
+        }
+    }};
+}
 
 fn transition(se_context: selinux::Context, uid: Uid, gid: Gid) {
     setgid(gid).expect("Failed to set GID. This test might need more privileges.");
@@ -119,31 +211,48 @@ impl<T: Serialize + DeserializeOwned> ChannelReader<T> {
     /// Receiving blocks until an object of type T has been read from the channel.
     /// Panics if an error occurs during io or deserialization.
     pub fn recv(&mut self) -> T {
+        match self.recv_err() {
+            Ok(val) => val,
+            Err(e) => panic!("{e}"),
+        }
+    }
+
+    /// Receives a serializable object from the corresponding ChannelWriter.
+    /// Receiving blocks until an object of type T has been read from the channel.
+    pub fn recv_err(&mut self) -> Result<T, Error> {
         let mut size_buffer = [0u8; std::mem::size_of::<usize>()];
         match self.0.read(&mut size_buffer).expect("In ChannelReader::recv: Failed to read size.") {
             r if r != size_buffer.len() => {
-                panic!("In ChannelReader::recv: Failed to read size. Insufficient data: {}", r);
+                return Err(format!(
+                    "In ChannelReader::recv: Failed to read size. Insufficient data: {}",
+                    r
+                )
+                .into());
             }
             _ => {}
         };
         let size = usize::from_be_bytes(size_buffer);
         let mut data_buffer = vec![0u8; size];
-        match self
-            .0
-            .read(&mut data_buffer)
-            .expect("In ChannelReader::recv: Failed to read serialized data.")
-        {
-            r if r != data_buffer.len() => {
-                panic!(
+        match self.0.read(&mut data_buffer) {
+            Ok(r) if r != data_buffer.len() => {
+                return Err(format!(
                     "In ChannelReader::recv: Failed to read serialized data. Insufficient data: {}",
                     r
-                );
+                )
+                .into());
             }
-            _ => {}
+            Ok(_) => {}
+            Err(e) => {
+                return Err(format!(
+                    "In ChannelReader::recv: Failed to read serialized data: {e:?}"
+                )
+                .into())
+            }
         };
 
-        serde_cbor::from_slice(&data_buffer)
-            .expect("In ChannelReader::recv: Failed to deserialize data.")
+        serde_cbor::from_slice(&data_buffer).map_err(|e| {
+            format!("In ChannelReader::recv: Failed to deserialize data: {e:?}").into()
+        })
     }
 }
 
@@ -186,6 +295,11 @@ impl<R: Serialize + DeserializeOwned, M: Serialize + DeserializeOwned> ChildHand
     /// Get child result. Panics if the child did not exit with status 0 or if a serialization
     /// error occurred.
     pub fn get_result(mut self) -> R {
+        self.get_death_result()
+    }
+
+    /// Get child result via a mutable reference.
+    fn get_death_result(&mut self) -> R {
         let status =
             waitpid(self.pid, None).expect("ChildHandle::wait: Failed while waiting for child.");
         match status {
@@ -200,6 +314,31 @@ impl<R: Serialize + DeserializeOwned, M: Serialize + DeserializeOwned> ChildHand
             }
             status => {
                 panic!("Child did not exit at all: {:?}", status);
+            }
+        }
+    }
+}
+
+impl<R, M> ChildHandle<Result<R, Error>, M>
+where
+    R: Serialize + DeserializeOwned,
+    M: Serialize + DeserializeOwned,
+{
+    /// Receive a response from the child.  If the child has closed the response
+    /// channel, assume it has terminated and read the final result.
+    /// Panics on child failure, but will display the child error value.
+    pub fn recv_or_die(&mut self) -> M {
+        match self.response_reader.recv_err() {
+            Ok(v) => v,
+            Err(_e) => {
+                // We have failed to read from the `response_reader` channel.
+                // Assume this is because the child completed early with an error.
+                match self.get_death_result() {
+                    Ok(_) => {
+                        panic!("Child completed OK despite failure to read a response!")
+                    }
+                    Err(e) => panic!("Child failed with:\n{e}"),
+                }
             }
         }
     }

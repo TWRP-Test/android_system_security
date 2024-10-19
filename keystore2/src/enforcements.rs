@@ -653,16 +653,12 @@ impl Enforcements {
     /// Check if the device is locked for the given user. If there's no entry yet for the user,
     /// we assume that the device is locked
     fn is_device_locked(&self, user_id: i32) -> bool {
-        // unwrap here because there's no way this mutex guard can be poisoned and
-        // because there's no way to recover, even if it is poisoned.
         let set = self.device_unlocked_set.lock().unwrap();
         !set.contains(&user_id)
     }
 
     /// Sets the device locked status for the user. This method is called externally.
     pub fn set_device_locked(&self, user_id: i32, device_locked_status: bool) {
-        // unwrap here because there's no way this mutex guard can be poisoned and
-        // because there's no way to recover, even if it is poisoned.
         let mut set = self.device_unlocked_set.lock().unwrap();
         if device_locked_status {
             set.remove(&user_id);
