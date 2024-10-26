@@ -25,7 +25,11 @@ use android_system_keystore2::aidl::android::system::keystore2::{
 };
 use binder::wait_for_interface;
 use keystore2_test_utils::{
-    authorizations, key_generations, key_generations::Error, run_as, SecLevel,
+    authorizations, key_generations,
+    key_generations::Error,
+    run_as,
+    run_as::{ChannelReader, ChannelWriter},
+    SecLevel,
 };
 use nix::unistd::{Gid, Uid};
 use openssl::bn::BigNum;
@@ -305,7 +309,8 @@ pub fn perform_sample_asym_sign_verify_op(
 ///
 /// # Safety
 ///
-/// Must only be called from a single-threaded process.
+/// Must only be called from a single-threaded process (e.g. as enforced by `AndroidTest.xml`
+/// setting `--test-threads=1`).
 pub unsafe fn execute_op_run_as_child(
     target_ctx: &'static str,
     domain: Domain,
@@ -315,41 +320,44 @@ pub unsafe fn execute_op_run_as_child(
     agid: Gid,
     forced_op: ForcedOp,
 ) -> run_as::ChildHandle<TestOutcome, BarrierReached> {
-    // SAFETY: The caller guarantees that there are no other threads.
-    unsafe {
-        run_as::run_as_child(target_ctx, auid, agid, move |reader, writer| {
-            let result = key_generations::map_ks_error(create_signing_operation(
-                forced_op,
-                KeyPurpose::SIGN,
-                Digest::SHA_2_256,
-                domain,
-                nspace,
-                alias,
-            ));
+    let child_fn = move |reader: &mut ChannelReader<BarrierReached>,
+                         writer: &mut ChannelWriter<BarrierReached>| {
+        let result = key_generations::map_ks_error(create_signing_operation(
+            forced_op,
+            KeyPurpose::SIGN,
+            Digest::SHA_2_256,
+            domain,
+            nspace,
+            alias,
+        ));
 
-            // Let the parent know that an operation has been started, then
-            // wait until the parent notifies us to continue, so the operation
-            // remains open.
-            writer.send(&BarrierReached {});
-            reader.recv();
+        // Let the parent know that an operation has been started, then
+        // wait until the parent notifies us to continue, so the operation
+        // remains open.
+        writer.send(&BarrierReached {});
+        reader.recv();
 
-            // Continue performing the operation after parent notifies.
-            match &result {
-                Ok(CreateOperationResponse { iOperation: Some(op), .. }) => {
-                    match key_generations::map_ks_error(perform_sample_sign_operation(op)) {
-                        Ok(()) => TestOutcome::Ok,
-                        Err(Error::Km(ErrorCode::INVALID_OPERATION_HANDLE)) => {
-                            TestOutcome::InvalidHandle
-                        }
-                        Err(e) => panic!("Error in performing op: {:#?}", e),
+        // Continue performing the operation after parent notifies.
+        match &result {
+            Ok(CreateOperationResponse { iOperation: Some(op), .. }) => {
+                match key_generations::map_ks_error(perform_sample_sign_operation(op)) {
+                    Ok(()) => TestOutcome::Ok,
+                    Err(Error::Km(ErrorCode::INVALID_OPERATION_HANDLE)) => {
+                        TestOutcome::InvalidHandle
                     }
+                    Err(e) => panic!("Error in performing op: {:#?}", e),
                 }
-                Ok(_) => TestOutcome::OtherErr,
-                Err(Error::Rc(ResponseCode::BACKEND_BUSY)) => TestOutcome::BackendBusy,
-                _ => TestOutcome::OtherErr,
             }
-        })
-        .expect("Failed to create an operation.")
+            Ok(_) => TestOutcome::OtherErr,
+            Err(Error::Rc(ResponseCode::BACKEND_BUSY)) => TestOutcome::BackendBusy,
+            _ => TestOutcome::OtherErr,
+        }
+    };
+
+    // Safety: The caller guarantees that there are no other threads.
+    unsafe {
+        run_as::run_as_child(target_ctx, auid, agid, child_fn)
+            .expect("Failed to create an operation.")
     }
 }
 

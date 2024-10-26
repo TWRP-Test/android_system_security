@@ -64,7 +64,9 @@ use android_system_keystore2::aidl::android::system::keystore2::{
     KeyMetadata::KeyMetadata, KeyParameters::KeyParameters, ResponseCode::ResponseCode,
 };
 use anyhow::{anyhow, Context, Result};
+use postprocessor_client::process_certificate_chain;
 use rkpd_client::store_rkpd_attestation_key;
+use rustutils::system_properties::read_bool;
 use std::convert::TryInto;
 use std::time::SystemTime;
 
@@ -632,14 +634,30 @@ impl KeystoreSecurityLevel {
                     log_security_safe_params(&params)
                 ))
                 .map(|(mut result, _)| {
-                    // The `certificateChain` in a `KeyCreationResult` should normally have one
-                    // `Certificate` for each certificate in the chain. To avoid having to
-                    // unnecessarily parse the RKP chain (which is concatenated DER-encoded certs),
-                    // stuff the whole concatenated chain into a single `Certificate`.
-                    // This is untangled by `store_new_key()`.
-                    result
-                        .certificateChain
-                        .push(Certificate { encodedCertificate: attestation_certs });
+                    if read_bool("remote_provisioning.use_cert_processor", false).unwrap_or(false) {
+                        let _wp = self.watch_millis(
+                            concat!(
+                                "KeystoreSecurityLevel::generate_key (RkpdProvisioned): ",
+                                "calling KeystorePostProcessor::process_certificate_chain",
+                            ),
+                            1000, // Post processing may take a little while due to network call.
+                        );
+                        // process_certificate_chain would either replace the certificate chain if
+                        // post-processing is successful or it would fallback to the original chain
+                        // on failure. In either case, we should get back the certificate chain
+                        // that is fit for storing with the newly generated key.
+                        result.certificateChain =
+                            process_certificate_chain(result.certificateChain, attestation_certs);
+                    } else {
+                        // The `certificateChain` in a `KeyCreationResult` should normally have one
+                        // `Certificate` for each certificate in the chain. To avoid having to
+                        // unnecessarily parse the RKP chain (which is concatenated DER-encoded
+                        // certs), stuff the whole concatenated chain into a single `Certificate`.
+                        // This is untangled by `store_new_key()`.
+                        result
+                            .certificateChain
+                            .push(Certificate { encodedCertificate: attestation_certs });
+                    }
                     result
                 })
             }

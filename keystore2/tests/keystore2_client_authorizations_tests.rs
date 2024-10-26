@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use crate::keystore2_client_test_utils::{
-    app_attest_key_feature_exists, delete_app_key,
+    app_attest_key_feature_exists, delete_app_key, get_vsr_api_level,
     perform_sample_asym_sign_verify_op, perform_sample_hmac_sign_verify_op,
     perform_sample_sym_key_decrypt_op, perform_sample_sym_key_encrypt_op,
     verify_certificate_serial_num, verify_certificate_subject_name, SAMPLE_PLAIN_TEXT,
@@ -638,6 +638,11 @@ fn keystore2_gen_key_auth_include_unique_id_success() {
 #[test]
 fn keystore2_gen_key_auth_app_data_app_id_test_success() {
     let sl = SecLevel::tee();
+    if sl.is_keymaster() && get_vsr_api_level() < 35 {
+        // `APPLICATION_DATA` key-parameter is causing the error on older devices, so skipping this
+        // test to run on older devices.
+        return;
+    }
 
     let gen_params = authorizations::AuthSetBuilder::new()
         .no_auth_required()
@@ -669,6 +674,11 @@ fn keystore2_gen_key_auth_app_data_app_id_test_success() {
 #[test]
 fn keystore2_op_auth_invalid_app_data_app_id_test_fail() {
     let sl = SecLevel::tee();
+    if sl.is_keymaster() && get_vsr_api_level() < 35 {
+        // `APPLICATION_DATA` key-parameter is causing the error on older devices, so skipping this
+        // test to run on older devices.
+        return;
+    }
 
     let gen_params = authorizations::AuthSetBuilder::new()
         .no_auth_required()
@@ -701,6 +711,11 @@ fn keystore2_op_auth_invalid_app_data_app_id_test_fail() {
 #[test]
 fn keystore2_op_auth_missing_app_data_test_fail() {
     let sl = SecLevel::tee();
+    if sl.is_keymaster() && get_vsr_api_level() < 35 {
+        // `APPLICATION_DATA` key-parameter is causing the error on older devices, so skipping this
+        // test to run on older devices.
+        return;
+    }
 
     let gen_params = authorizations::AuthSetBuilder::new()
         .no_auth_required()
@@ -733,6 +748,11 @@ fn keystore2_op_auth_missing_app_data_test_fail() {
 #[test]
 fn keystore2_op_auth_missing_app_id_test_fail() {
     let sl = SecLevel::tee();
+    if sl.is_keymaster() && get_vsr_api_level() < 35 {
+        // `APPLICATION_DATA` key-parameter is causing the error on older devices, so skipping this
+        // test to run on older devices.
+        return;
+    }
 
     let gen_params = authorizations::AuthSetBuilder::new()
         .no_auth_required()
@@ -766,6 +786,11 @@ fn keystore2_op_auth_missing_app_id_test_fail() {
 fn keystore2_gen_attested_key_auth_app_id_app_data_test_success() {
     skip_test_if_no_app_attest_key_feature!();
     let sl = SecLevel::tee();
+    if sl.is_keymaster() && get_vsr_api_level() < 35 {
+        // `APPLICATION_DATA` key-parameter is causing the error on older devices, so skipping this
+        // test to run on older devices.
+        return;
+    }
 
     // Generate attestation key.
     let attest_gen_params = authorizations::AuthSetBuilder::new()
@@ -822,6 +847,11 @@ fn keystore2_gen_attested_key_auth_app_id_app_data_test_success() {
 fn keystore2_gen_attestation_key_with_auth_app_id_app_data_test_fail() {
     skip_test_if_no_app_attest_key_feature!();
     let sl = SecLevel::tee();
+    if sl.is_keymaster() && get_vsr_api_level() < 35 {
+        // `APPLICATION_DATA` key-parameter is causing the error on older devices, so skipping this
+        // test to run on older devices.
+        return;
+    }
 
     // Generate attestation key.
     let attest_gen_params = authorizations::AuthSetBuilder::new()

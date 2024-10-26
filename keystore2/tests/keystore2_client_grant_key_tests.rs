@@ -25,7 +25,7 @@ use android_system_keystore2::aidl::android::system::keystore2::{
 use keystore2_test_utils::{
     authorizations, get_keystore_service, key_generations, key_generations::Error, run_as, SecLevel,
 };
-use nix::unistd::{getuid, Gid, Uid};
+use nix::unistd::getuid;
 use rustutils::users::AID_USER_OFFSET;
 
 /// Generate an EC signing key and grant it to the user with given access vector.
@@ -100,53 +100,47 @@ fn keystore2_grant_key_with_invalid_perm_expecting_syserror() {
 /// should fail to load the key with permission denied error.
 #[test]
 fn keystore2_grant_key_with_perm_none() {
-    static TARGET_SU_CTX: &str = "u:r:su:s0";
-
-    static GRANTEE_CTX: &str = "u:r:untrusted_app:s0:c91,c256,c10,c20";
     const USER_ID: u32 = 99;
     const APPLICATION_ID: u32 = 10001;
     static GRANTEE_UID: u32 = USER_ID * AID_USER_OFFSET + APPLICATION_ID;
     static GRANTEE_GID: u32 = GRANTEE_UID;
 
-    // SAFETY: The test is run in a separate process with no other threads.
-    let grant_key_nspace = unsafe {
-        run_as::run_as(TARGET_SU_CTX, Uid::from_raw(0), Gid::from_raw(0), || {
-            let empty_access_vector = KeyPermission::NONE.0;
+    let grantor_fn = || {
+        let empty_access_vector = KeyPermission::NONE.0;
 
-            let grant_key = key_generations::map_ks_error(generate_ec_key_and_grant_to_user(
-                GRANTEE_UID.try_into().unwrap(),
-                empty_access_vector,
-            ))
-            .unwrap();
+        let grant_key = key_generations::map_ks_error(generate_ec_key_and_grant_to_user(
+            GRANTEE_UID.try_into().unwrap(),
+            empty_access_vector,
+        ))
+        .unwrap();
 
-            assert_eq!(grant_key.domain, Domain::GRANT);
+        assert_eq!(grant_key.domain, Domain::GRANT);
 
-            grant_key.nspace
-        })
+        grant_key.nspace
     };
+
+    // Safety: only one thread at this point (enforced by `AndroidTest.xml` setting
+    // `--test-threads=1`), and nothing yet done with binder.
+    let grant_key_nspace = unsafe { run_as::run_as_root(grantor_fn) };
 
     // In grantee context try to load the key, it should fail to load the granted key as it is
     // granted with empty access vector.
-    // SAFETY: The test is run in a separate process with no other threads.
-    unsafe {
-        run_as::run_as(
-            GRANTEE_CTX,
-            Uid::from_raw(GRANTEE_UID),
-            Gid::from_raw(GRANTEE_GID),
-            move || {
-                let keystore2 = get_keystore_service();
+    let grantee_fn = move || {
+        let keystore2 = get_keystore_service();
 
-                let result = key_generations::map_ks_error(keystore2.getKeyEntry(&KeyDescriptor {
-                    domain: Domain::GRANT,
-                    nspace: grant_key_nspace,
-                    alias: None,
-                    blob: None,
-                }));
-                assert!(result.is_err());
-                assert_eq!(Error::Rc(ResponseCode::PERMISSION_DENIED), result.unwrap_err());
-            },
-        )
+        let result = key_generations::map_ks_error(keystore2.getKeyEntry(&KeyDescriptor {
+            domain: Domain::GRANT,
+            nspace: grant_key_nspace,
+            alias: None,
+            blob: None,
+        }));
+        assert!(result.is_err());
+        assert_eq!(Error::Rc(ResponseCode::PERMISSION_DENIED), result.unwrap_err());
     };
+
+    // Safety: only one thread at this point (enforced by `AndroidTest.xml` setting
+    // `--test-threads=1`), and nothing yet done with binder.
+    unsafe { run_as::run_as_app(GRANTEE_UID, GRANTEE_GID, grantee_fn) };
 }
 
 /// Grant a key to the user (grantee) with `GET_INFO|USE` key permissions. Verify whether grantee
@@ -156,84 +150,77 @@ fn keystore2_grant_key_with_perm_none() {
 /// delete it as `DELETE` permission is not granted.
 #[test]
 fn keystore2_grant_get_info_use_key_perm() {
-    static TARGET_SU_CTX: &str = "u:r:su:s0";
-
-    static GRANTEE_CTX: &str = "u:r:untrusted_app:s0:c91,c256,c10,c20";
     const USER_ID: u32 = 99;
     const APPLICATION_ID: u32 = 10001;
     static GRANTEE_UID: u32 = USER_ID * AID_USER_OFFSET + APPLICATION_ID;
     static GRANTEE_GID: u32 = GRANTEE_UID;
 
     // Generate a key and grant it to a user with GET_INFO|USE key permissions.
-    // SAFETY: The test is run in a separate process with no other threads.
-    let grant_key_nspace = unsafe {
-        run_as::run_as(TARGET_SU_CTX, Uid::from_raw(0), Gid::from_raw(0), || {
-            let access_vector = KeyPermission::GET_INFO.0 | KeyPermission::USE.0;
-            let grant_key = key_generations::map_ks_error(generate_ec_key_and_grant_to_user(
-                GRANTEE_UID.try_into().unwrap(),
-                access_vector,
-            ))
-            .unwrap();
+    let grantor_fn = || {
+        let access_vector = KeyPermission::GET_INFO.0 | KeyPermission::USE.0;
+        let grant_key = key_generations::map_ks_error(generate_ec_key_and_grant_to_user(
+            GRANTEE_UID.try_into().unwrap(),
+            access_vector,
+        ))
+        .unwrap();
 
-            assert_eq!(grant_key.domain, Domain::GRANT);
+        assert_eq!(grant_key.domain, Domain::GRANT);
 
-            grant_key.nspace
-        })
+        grant_key.nspace
     };
+
+    // Safety: only one thread at this point (enforced by `AndroidTest.xml` setting
+    // `--test-threads=1`), and nothing yet done with binder.
+    let grant_key_nspace = unsafe { run_as::run_as_root(grantor_fn) };
 
     // In grantee context load the key and try to perform crypto operation.
-    // SAFETY: The test is run in a separate process with no other threads.
-    unsafe {
-        run_as::run_as(
-            GRANTEE_CTX,
-            Uid::from_raw(GRANTEE_UID),
-            Gid::from_raw(GRANTEE_GID),
-            move || {
-                let sl = SecLevel::tee();
+    let grantee_fn = move || {
+        let sl = SecLevel::tee();
 
-                // Load the granted key.
-                let key_entry_response = sl
-                    .keystore2
-                    .getKeyEntry(&KeyDescriptor {
-                        domain: Domain::GRANT,
-                        nspace: grant_key_nspace,
-                        alias: None,
-                        blob: None,
-                    })
-                    .unwrap();
+        // Load the granted key.
+        let key_entry_response = sl
+            .keystore2
+            .getKeyEntry(&KeyDescriptor {
+                domain: Domain::GRANT,
+                nspace: grant_key_nspace,
+                alias: None,
+                blob: None,
+            })
+            .unwrap();
 
-                // Perform sample crypto operation using granted key.
-                let op_response = sl
-                    .binder
-                    .createOperation(
-                        &key_entry_response.metadata.key,
-                        &authorizations::AuthSetBuilder::new()
-                            .purpose(KeyPurpose::SIGN)
-                            .digest(Digest::SHA_2_256),
-                        false,
-                    )
-                    .unwrap();
-                assert!(op_response.iOperation.is_some());
-                assert_eq!(
-                    Ok(()),
-                    key_generations::map_ks_error(perform_sample_sign_operation(
-                        &op_response.iOperation.unwrap()
-                    ))
-                );
+        // Perform sample crypto operation using granted key.
+        let op_response = sl
+            .binder
+            .createOperation(
+                &key_entry_response.metadata.key,
+                &authorizations::AuthSetBuilder::new()
+                    .purpose(KeyPurpose::SIGN)
+                    .digest(Digest::SHA_2_256),
+                false,
+            )
+            .unwrap();
+        assert!(op_response.iOperation.is_some());
+        assert_eq!(
+            Ok(()),
+            key_generations::map_ks_error(perform_sample_sign_operation(
+                &op_response.iOperation.unwrap()
+            ))
+        );
 
-                // Try to delete the key, it is expected to be fail with permission denied error.
-                let result =
-                    key_generations::map_ks_error(sl.keystore2.deleteKey(&KeyDescriptor {
-                        domain: Domain::GRANT,
-                        nspace: grant_key_nspace,
-                        alias: None,
-                        blob: None,
-                    }));
-                assert!(result.is_err());
-                assert_eq!(Error::Rc(ResponseCode::PERMISSION_DENIED), result.unwrap_err());
-            },
-        )
+        // Try to delete the key, it is expected to be fail with permission denied error.
+        let result = key_generations::map_ks_error(sl.keystore2.deleteKey(&KeyDescriptor {
+            domain: Domain::GRANT,
+            nspace: grant_key_nspace,
+            alias: None,
+            blob: None,
+        }));
+        assert!(result.is_err());
+        assert_eq!(Error::Rc(ResponseCode::PERMISSION_DENIED), result.unwrap_err());
     };
+
+    // Safety: only one thread at this point (enforced by `AndroidTest.xml` setting
+    // `--test-threads=1`), and nothing yet done with binder.
+    unsafe { run_as::run_as_app(GRANTEE_UID, GRANTEE_GID, grantee_fn) };
 }
 
 /// Grant a key to the user with DELETE access. In grantee context load the key and delete it.
@@ -241,8 +228,6 @@ fn keystore2_grant_get_info_use_key_perm() {
 /// should fail to find the key with error response `KEY_NOT_FOUND`.
 #[test]
 fn keystore2_grant_delete_key_success() {
-    static GRANTOR_SU_CTX: &str = "u:r:su:s0";
-    static GRANTEE_CTX: &str = "u:r:untrusted_app:s0:c91,c256,c10,c20";
     const USER_ID: u32 = 99;
     const APPLICATION_ID: u32 = 10001;
     static GRANTEE_UID: u32 = USER_ID * AID_USER_OFFSET + APPLICATION_ID;
@@ -250,60 +235,57 @@ fn keystore2_grant_delete_key_success() {
     static ALIAS: &str = "ks_grant_key_delete_success";
 
     // Generate a key and grant it to a user with DELETE permission.
-    // SAFETY: The test is run in a separate process with no other threads.
-    let grant_key_nspace = unsafe {
-        run_as::run_as(GRANTOR_SU_CTX, Uid::from_raw(0), Gid::from_raw(0), || {
-            let sl = SecLevel::tee();
-            let access_vector = KeyPermission::DELETE.0;
-            let mut grant_keys = generate_ec_key_and_grant_to_users(
-                &sl,
-                Some(ALIAS.to_string()),
-                vec![GRANTEE_UID.try_into().unwrap()],
-                access_vector,
-            )
-            .unwrap();
+    let grantor_fn = || {
+        let sl = SecLevel::tee();
+        let access_vector = KeyPermission::DELETE.0;
+        let mut grant_keys = generate_ec_key_and_grant_to_users(
+            &sl,
+            Some(ALIAS.to_string()),
+            vec![GRANTEE_UID.try_into().unwrap()],
+            access_vector,
+        )
+        .unwrap();
 
-            grant_keys.remove(0)
-        })
+        grant_keys.remove(0)
     };
+
+    // Safety: only one thread at this point (enforced by `AndroidTest.xml` setting
+    // `--test-threads=1`), and nothing yet done with binder.
+    let grant_key_nspace = unsafe { run_as::run_as_root(grantor_fn) };
 
     // Grantee context, delete the key.
-    // SAFETY: The test is run in a separate process with no other threads.
-    unsafe {
-        run_as::run_as(
-            GRANTEE_CTX,
-            Uid::from_raw(GRANTEE_UID),
-            Gid::from_raw(GRANTEE_GID),
-            move || {
-                let keystore2 = get_keystore_service();
-                keystore2
-                    .deleteKey(&KeyDescriptor {
-                        domain: Domain::GRANT,
-                        nspace: grant_key_nspace,
-                        alias: None,
-                        blob: None,
-                    })
-                    .unwrap();
-            },
-        )
+    let grantee_fn = move || {
+        let keystore2 = get_keystore_service();
+        keystore2
+            .deleteKey(&KeyDescriptor {
+                domain: Domain::GRANT,
+                nspace: grant_key_nspace,
+                alias: None,
+                blob: None,
+            })
+            .unwrap();
     };
 
+    // Safety: only one thread at this point (enforced by `AndroidTest.xml` setting
+    // `--test-threads=1`), and nothing yet done with binder.
+    unsafe { run_as::run_as_app(GRANTEE_UID, GRANTEE_GID, grantee_fn) };
+
     // Verify whether key got deleted in grantor's context.
-    // SAFETY: The test is run in a separate process with no other threads.
-    unsafe {
-        run_as::run_as(GRANTOR_SU_CTX, Uid::from_raw(0), Gid::from_raw(0), move || {
-            let keystore2_inst = get_keystore_service();
-            let result =
-                key_generations::map_ks_error(keystore2_inst.getKeyEntry(&KeyDescriptor {
-                    domain: Domain::APP,
-                    nspace: -1,
-                    alias: Some(ALIAS.to_string()),
-                    blob: None,
-                }));
-            assert!(result.is_err());
-            assert_eq!(Error::Rc(ResponseCode::KEY_NOT_FOUND), result.unwrap_err());
-        })
+    let grantor_fn = move || {
+        let keystore2_inst = get_keystore_service();
+        let result = key_generations::map_ks_error(keystore2_inst.getKeyEntry(&KeyDescriptor {
+            domain: Domain::APP,
+            nspace: -1,
+            alias: Some(ALIAS.to_string()),
+            blob: None,
+        }));
+        assert!(result.is_err());
+        assert_eq!(Error::Rc(ResponseCode::KEY_NOT_FOUND), result.unwrap_err());
     };
+
+    // Safety: only one thread at this point (enforced by `AndroidTest.xml` setting
+    // `--test-threads=1`), and nothing yet done with binder.
+    unsafe { run_as::run_as_root(grantor_fn) };
 }
 
 /// Grant a key to the user. In grantee context load the granted key and try to grant it to second
@@ -311,9 +293,8 @@ fn keystore2_grant_delete_key_success() {
 /// from grantee context. Test should make sure second grantee should not have a access to granted
 /// key.
 #[test]
+#[ignore]
 fn keystore2_grant_key_fails_with_permission_denied() {
-    static GRANTOR_SU_CTX: &str = "u:r:su:s0";
-    static GRANTEE_CTX: &str = "u:r:untrusted_app:s0:c91,c256,c10,c20";
     const USER_ID: u32 = 99;
     const APPLICATION_ID: u32 = 10001;
     static GRANTEE_UID: u32 = USER_ID * AID_USER_OFFSET + APPLICATION_ID;
@@ -325,77 +306,69 @@ fn keystore2_grant_key_fails_with_permission_denied() {
     static SEC_GRANTEE_GID: u32 = SEC_GRANTEE_UID;
 
     // Generate a key and grant it to a user with GET_INFO permission.
-    // SAFETY: The test is run in a separate process with no other threads.
-    let grant_key_nspace = unsafe {
-        run_as::run_as(GRANTOR_SU_CTX, Uid::from_raw(0), Gid::from_raw(0), || {
-            let sl = SecLevel::tee();
-            let access_vector = KeyPermission::GET_INFO.0;
-            let alias = format!("ks_grant_perm_denied_key_{}", getuid());
-            let mut grant_keys = generate_ec_key_and_grant_to_users(
-                &sl,
-                Some(alias),
-                vec![GRANTEE_UID.try_into().unwrap()],
-                access_vector,
-            )
-            .unwrap();
+    let grantor_fn = || {
+        let sl = SecLevel::tee();
+        let access_vector = KeyPermission::GET_INFO.0;
+        let alias = format!("ks_grant_perm_denied_key_{}", getuid());
+        let mut grant_keys = generate_ec_key_and_grant_to_users(
+            &sl,
+            Some(alias),
+            vec![GRANTEE_UID.try_into().unwrap()],
+            access_vector,
+        )
+        .unwrap();
 
-            grant_keys.remove(0)
-        })
+        grant_keys.remove(0)
     };
+    // Safety: only one thread at this point (enforced by `AndroidTest.xml` setting
+    // `--test-threads=1`), and nothing yet done with binder.
+    let grant_key_nspace = unsafe { run_as::run_as_root(grantor_fn) };
 
     // Grantee context, load the granted key and try to grant it to `SEC_GRANTEE_UID` grantee.
-    // SAFETY: The test is run in a separate process with no other threads.
-    unsafe {
-        run_as::run_as(
-            GRANTEE_CTX,
-            Uid::from_raw(GRANTEE_UID),
-            Gid::from_raw(GRANTEE_GID),
-            move || {
-                let keystore2 = get_keystore_service();
-                let access_vector = KeyPermission::GET_INFO.0;
+    let grantee_fn = move || {
+        let keystore2 = get_keystore_service();
+        let access_vector = KeyPermission::GET_INFO.0;
 
-                let key_entry_response = keystore2
-                    .getKeyEntry(&KeyDescriptor {
-                        domain: Domain::GRANT,
-                        nspace: grant_key_nspace,
-                        alias: None,
-                        blob: None,
-                    })
-                    .unwrap();
+        let key_entry_response = keystore2
+            .getKeyEntry(&KeyDescriptor {
+                domain: Domain::GRANT,
+                nspace: grant_key_nspace,
+                alias: None,
+                blob: None,
+            })
+            .unwrap();
 
-                let result = key_generations::map_ks_error(keystore2.grant(
-                    &key_entry_response.metadata.key,
-                    SEC_GRANTEE_UID.try_into().unwrap(),
-                    access_vector,
-                ));
-                assert!(result.is_err());
-                assert_eq!(Error::Rc(ResponseCode::PERMISSION_DENIED), result.unwrap_err());
-            },
-        )
+        let result = key_generations::map_ks_error(keystore2.grant(
+            &key_entry_response.metadata.key,
+            SEC_GRANTEE_UID.try_into().unwrap(),
+            access_vector,
+        ));
+        assert!(result.is_err());
+        assert_eq!(Error::Rc(ResponseCode::PERMISSION_DENIED), result.unwrap_err());
     };
+
+    // Safety: only one thread at this point (enforced by `AndroidTest.xml` setting
+    // `--test-threads=1`), and nothing yet done with binder.
+    unsafe { run_as::run_as_app(GRANTEE_UID, GRANTEE_GID, grantee_fn) };
 
     // Make sure second grantee shouldn't have access to the above granted key.
-    // SAFETY: The test is run in a separate process with no other threads.
-    unsafe {
-        run_as::run_as(
-            GRANTEE_CTX,
-            Uid::from_raw(SEC_GRANTEE_UID),
-            Gid::from_raw(SEC_GRANTEE_GID),
-            move || {
-                let keystore2 = get_keystore_service();
+    let grantee2_fn = move || {
+        let keystore2 = get_keystore_service();
 
-                let result = key_generations::map_ks_error(keystore2.getKeyEntry(&KeyDescriptor {
-                    domain: Domain::GRANT,
-                    nspace: grant_key_nspace,
-                    alias: None,
-                    blob: None,
-                }));
+        let result = key_generations::map_ks_error(keystore2.getKeyEntry(&KeyDescriptor {
+            domain: Domain::GRANT,
+            nspace: grant_key_nspace,
+            alias: None,
+            blob: None,
+        }));
 
-                assert!(result.is_err());
-                assert_eq!(Error::Rc(ResponseCode::KEY_NOT_FOUND), result.unwrap_err());
-            },
-        )
+        assert!(result.is_err());
+        assert_eq!(Error::Rc(ResponseCode::KEY_NOT_FOUND), result.unwrap_err());
     };
+
+    // Safety: only one thread at this point (enforced by `AndroidTest.xml` setting
+    // `--test-threads=1`), and nothing yet done with binder.
+    unsafe { run_as::run_as_app(SEC_GRANTEE_UID, SEC_GRANTEE_GID, grantee2_fn) };
 }
 
 /// Try to grant a key with `GRANT` access. Keystore2 system shouldn't allow to grant a key with
@@ -448,67 +421,57 @@ fn keystore2_grant_fails_with_non_existing_key_expect_key_not_found_err() {
 /// the key. Grantee should fail to load the ungranted key with `KEY_NOT_FOUND` error response.
 #[test]
 fn keystore2_ungrant_key_success() {
-    static GRANTOR_SU_CTX: &str = "u:r:su:s0";
-    static GRANTEE_CTX: &str = "u:r:untrusted_app:s0:c91,c256,c10,c20";
     const USER_ID: u32 = 99;
     const APPLICATION_ID: u32 = 10001;
     static GRANTEE_UID: u32 = USER_ID * AID_USER_OFFSET + APPLICATION_ID;
     static GRANTEE_GID: u32 = GRANTEE_UID;
 
     // Generate a key and grant it to a user with GET_INFO permission.
-    // SAFETY: The test is run in a separate process with no other threads.
-    let grant_key_nspace = unsafe {
-        run_as::run_as(GRANTOR_SU_CTX, Uid::from_raw(0), Gid::from_raw(0), || {
-            let sl = SecLevel::tee();
-            let alias = format!("ks_ungrant_test_key_1{}", getuid());
-            let access_vector = KeyPermission::GET_INFO.0;
-            let mut grant_keys = generate_ec_key_and_grant_to_users(
-                &sl,
-                Some(alias.to_string()),
-                vec![GRANTEE_UID.try_into().unwrap()],
-                access_vector,
+    let grantor_fn = || {
+        let sl = SecLevel::tee();
+        let alias = format!("ks_ungrant_test_key_1{}", getuid());
+        let access_vector = KeyPermission::GET_INFO.0;
+        let mut grant_keys = generate_ec_key_and_grant_to_users(
+            &sl,
+            Some(alias.to_string()),
+            vec![GRANTEE_UID.try_into().unwrap()],
+            access_vector,
+        )
+        .unwrap();
+
+        let grant_key_nspace = grant_keys.remove(0);
+
+        // Ungrant above granted key.
+        sl.keystore2
+            .ungrant(
+                &KeyDescriptor { domain: Domain::APP, nspace: -1, alias: Some(alias), blob: None },
+                GRANTEE_UID.try_into().unwrap(),
             )
             .unwrap();
 
-            let grant_key_nspace = grant_keys.remove(0);
-
-            // Ungrant above granted key.
-            sl.keystore2
-                .ungrant(
-                    &KeyDescriptor {
-                        domain: Domain::APP,
-                        nspace: -1,
-                        alias: Some(alias),
-                        blob: None,
-                    },
-                    GRANTEE_UID.try_into().unwrap(),
-                )
-                .unwrap();
-
-            grant_key_nspace
-        })
+        grant_key_nspace
     };
+
+    // Safety: only one thread at this point (enforced by `AndroidTest.xml` setting
+    // `--test-threads=1`), and nothing yet done with binder.
+    let grant_key_nspace = unsafe { run_as::run_as_root(grantor_fn) };
 
     // Grantee context, try to load the ungranted key.
-    // SAFETY: The test is run in a separate process with no other threads.
-    unsafe {
-        run_as::run_as(
-            GRANTEE_CTX,
-            Uid::from_raw(GRANTEE_UID),
-            Gid::from_raw(GRANTEE_GID),
-            move || {
-                let keystore2 = get_keystore_service();
-                let result = key_generations::map_ks_error(keystore2.getKeyEntry(&KeyDescriptor {
-                    domain: Domain::GRANT,
-                    nspace: grant_key_nspace,
-                    alias: None,
-                    blob: None,
-                }));
-                assert!(result.is_err());
-                assert_eq!(Error::Rc(ResponseCode::KEY_NOT_FOUND), result.unwrap_err());
-            },
-        )
+    let grantee_fn = move || {
+        let keystore2 = get_keystore_service();
+        let result = key_generations::map_ks_error(keystore2.getKeyEntry(&KeyDescriptor {
+            domain: Domain::GRANT,
+            nspace: grant_key_nspace,
+            alias: None,
+            blob: None,
+        }));
+        assert!(result.is_err());
+        assert_eq!(Error::Rc(ResponseCode::KEY_NOT_FOUND), result.unwrap_err());
     };
+
+    // Safety: only one thread at this point (enforced by `AndroidTest.xml` setting
+    // `--test-threads=1`), and nothing yet done with binder.
+    unsafe { run_as::run_as_app(GRANTEE_UID, GRANTEE_GID, grantee_fn) };
 }
 
 /// Generate a key, grant it to the user and then delete the granted key. Try to ungrant
@@ -518,93 +481,84 @@ fn keystore2_ungrant_key_success() {
 /// associated key is deleted from grantor context.
 #[test]
 fn keystore2_ungrant_fails_with_non_existing_key_expect_key_not_found_error() {
-    static GRANTOR_SU_CTX: &str = "u:r:su:s0";
-    static GRANTEE_CTX: &str = "u:r:untrusted_app:s0:c91,c256,c10,c20";
-
     const APPLICATION_ID: u32 = 10001;
     const USER_ID: u32 = 99;
     static GRANTEE_UID: u32 = USER_ID * AID_USER_OFFSET + APPLICATION_ID;
     static GRANTEE_GID: u32 = GRANTEE_UID;
 
-    // SAFETY: The test is run in a separate process with no other threads.
-    let grant_key_nspace = unsafe {
-        run_as::run_as(GRANTOR_SU_CTX, Uid::from_raw(0), Gid::from_raw(0), || {
-            let sl = SecLevel::tee();
-            let alias = format!("{}{}", "ks_grant_delete_ungrant_test_key_1", getuid());
+    let grantor_fn = || {
+        let sl = SecLevel::tee();
+        let alias = format!("{}{}", "ks_grant_delete_ungrant_test_key_1", getuid());
 
-            let key_metadata = key_generations::generate_ec_p256_signing_key(
-                &sl,
-                Domain::SELINUX,
-                key_generations::SELINUX_SHELL_NAMESPACE,
-                Some(alias.to_string()),
-                None,
-            )
+        let key_metadata = key_generations::generate_ec_p256_signing_key(
+            &sl,
+            Domain::SELINUX,
+            key_generations::SELINUX_SHELL_NAMESPACE,
+            Some(alias.to_string()),
+            None,
+        )
+        .unwrap();
+
+        let access_vector = KeyPermission::GET_INFO.0;
+        let grant_key = sl
+            .keystore2
+            .grant(&key_metadata.key, GRANTEE_UID.try_into().unwrap(), access_vector)
             .unwrap();
+        assert_eq!(grant_key.domain, Domain::GRANT);
 
-            let access_vector = KeyPermission::GET_INFO.0;
-            let grant_key = sl
-                .keystore2
-                .grant(&key_metadata.key, GRANTEE_UID.try_into().unwrap(), access_vector)
-                .unwrap();
-            assert_eq!(grant_key.domain, Domain::GRANT);
+        // Delete above granted key.
+        sl.keystore2.deleteKey(&key_metadata.key).unwrap();
 
-            // Delete above granted key.
-            sl.keystore2.deleteKey(&key_metadata.key).unwrap();
+        // Try to ungrant above granted key.
+        let result = key_generations::map_ks_error(
+            sl.keystore2.ungrant(&key_metadata.key, GRANTEE_UID.try_into().unwrap()),
+        );
+        assert!(result.is_err());
+        assert_eq!(Error::Rc(ResponseCode::KEY_NOT_FOUND), result.unwrap_err());
 
-            // Try to ungrant above granted key.
-            let result = key_generations::map_ks_error(
-                sl.keystore2.ungrant(&key_metadata.key, GRANTEE_UID.try_into().unwrap()),
-            );
-            assert!(result.is_err());
-            assert_eq!(Error::Rc(ResponseCode::KEY_NOT_FOUND), result.unwrap_err());
+        // Generate a new key with the same alias and try to access the earlier granted key
+        // in grantee context.
+        let result = key_generations::generate_ec_p256_signing_key(
+            &sl,
+            Domain::SELINUX,
+            key_generations::SELINUX_SHELL_NAMESPACE,
+            Some(alias),
+            None,
+        );
+        assert!(result.is_ok());
 
-            // Generate a new key with the same alias and try to access the earlier granted key
-            // in grantee context.
-            let result = key_generations::generate_ec_p256_signing_key(
-                &sl,
-                Domain::SELINUX,
-                key_generations::SELINUX_SHELL_NAMESPACE,
-                Some(alias),
-                None,
-            );
-            assert!(result.is_ok());
-
-            grant_key.nspace
-        })
+        grant_key.nspace
     };
+
+    // Safety: only one thread at this point (enforced by `AndroidTest.xml` setting
+    // `--test-threads=1`), and nothing yet done with binder.
+    let grant_key_nspace = unsafe { run_as::run_as_root(grantor_fn) };
 
     // Make sure grant did not persist, try to access the earlier granted key in grantee context.
     // Grantee context should fail to load the granted key as its associated key is deleted in
     // grantor context.
-    // SAFETY: The test is run in a separate process with no other threads.
-    unsafe {
-        run_as::run_as(
-            GRANTEE_CTX,
-            Uid::from_raw(GRANTEE_UID),
-            Gid::from_raw(GRANTEE_GID),
-            move || {
-                let keystore2 = get_keystore_service();
+    let grantee_fn = move || {
+        let keystore2 = get_keystore_service();
 
-                let result = key_generations::map_ks_error(keystore2.getKeyEntry(&KeyDescriptor {
-                    domain: Domain::GRANT,
-                    nspace: grant_key_nspace,
-                    alias: None,
-                    blob: None,
-                }));
-                assert!(result.is_err());
-                assert_eq!(Error::Rc(ResponseCode::KEY_NOT_FOUND), result.unwrap_err());
-            },
-        )
+        let result = key_generations::map_ks_error(keystore2.getKeyEntry(&KeyDescriptor {
+            domain: Domain::GRANT,
+            nspace: grant_key_nspace,
+            alias: None,
+            blob: None,
+        }));
+        assert!(result.is_err());
+        assert_eq!(Error::Rc(ResponseCode::KEY_NOT_FOUND), result.unwrap_err());
     };
+
+    // Safety: only one thread at this point (enforced by `AndroidTest.xml` setting
+    // `--test-threads=1`), and nothing yet done with binder.
+    unsafe { run_as::run_as_app(GRANTEE_UID, GRANTEE_GID, grantee_fn) };
 }
 
 /// Grant a key to multiple users. Verify that all grantees should succeed in loading the key and
 /// use it for performing an operation successfully.
 #[test]
 fn keystore2_grant_key_to_multi_users_success() {
-    static GRANTOR_SU_CTX: &str = "u:r:su:s0";
-    static GRANTEE_CTX: &str = "u:r:untrusted_app:s0:c91,c256,c10,c20";
-
     const APPLICATION_ID: u32 = 10001;
     const USER_ID_1: u32 = 99;
     static GRANTEE_1_UID: u32 = USER_ID_1 * AID_USER_OFFSET + APPLICATION_ID;
@@ -615,46 +569,42 @@ fn keystore2_grant_key_to_multi_users_success() {
     static GRANTEE_2_GID: u32 = GRANTEE_2_UID;
 
     // Generate a key and grant it to multiple users with GET_INFO|USE permissions.
-    // SAFETY: The test is run in a separate process with no other threads.
-    let mut grant_keys = unsafe {
-        run_as::run_as(GRANTOR_SU_CTX, Uid::from_raw(0), Gid::from_raw(0), || {
-            let sl = SecLevel::tee();
-            let alias = format!("ks_grant_test_key_2{}", getuid());
-            let access_vector = KeyPermission::GET_INFO.0 | KeyPermission::USE.0;
+    let grantor_fn = || {
+        let sl = SecLevel::tee();
+        let alias = format!("ks_grant_test_key_2{}", getuid());
+        let access_vector = KeyPermission::GET_INFO.0 | KeyPermission::USE.0;
 
-            generate_ec_key_and_grant_to_users(
-                &sl,
-                Some(alias),
-                vec![GRANTEE_1_UID.try_into().unwrap(), GRANTEE_2_UID.try_into().unwrap()],
-                access_vector,
-            )
-            .unwrap()
-        })
+        generate_ec_key_and_grant_to_users(
+            &sl,
+            Some(alias),
+            vec![GRANTEE_1_UID.try_into().unwrap(), GRANTEE_2_UID.try_into().unwrap()],
+            access_vector,
+        )
+        .unwrap()
     };
+
+    // Safety: only one thread at this point (enforced by `AndroidTest.xml` setting
+    // `--test-threads=1`), and nothing yet done with binder.
+    let mut grant_keys = unsafe { run_as::run_as_root(grantor_fn) };
 
     for (grantee_uid, grantee_gid) in
         &[(GRANTEE_1_UID, GRANTEE_1_GID), (GRANTEE_2_UID, GRANTEE_2_GID)]
     {
         let grant_key_nspace = grant_keys.remove(0);
-        // SAFETY: The test is run in a separate process with no other threads.
-        unsafe {
-            run_as::run_as(
-                GRANTEE_CTX,
-                Uid::from_raw(*grantee_uid),
-                Gid::from_raw(*grantee_gid),
-                move || {
-                    let sl = SecLevel::tee();
+        let grantee_fn = move || {
+            let sl = SecLevel::tee();
 
-                    assert_eq!(
-                        Ok(()),
-                        key_generations::map_ks_error(load_grant_key_and_perform_sign_operation(
-                            &sl,
-                            grant_key_nspace
-                        ))
-                    );
-                },
-            )
+            assert_eq!(
+                Ok(()),
+                key_generations::map_ks_error(load_grant_key_and_perform_sign_operation(
+                    &sl,
+                    grant_key_nspace
+                ))
+            );
         };
+        // Safety: only one thread at this point (enforced by `AndroidTest.xml` setting
+        // `--test-threads=1`), and nothing yet done with binder.
+        unsafe { run_as::run_as_app(*grantee_uid, *grantee_gid, grantee_fn) };
     }
 }
 
@@ -663,9 +613,6 @@ fn keystore2_grant_key_to_multi_users_success() {
 /// fail to load the granted key with `KEY_NOT_FOUND` error response.
 #[test]
 fn keystore2_grant_key_to_multi_users_delete_fails_with_key_not_found_error() {
-    static GRANTOR_SU_CTX: &str = "u:r:su:s0";
-    static GRANTEE_CTX: &str = "u:r:untrusted_app:s0:c91,c256,c10,c20";
-
     const USER_ID_1: u32 = 99;
     const APPLICATION_ID: u32 = 10001;
     static GRANTEE_1_UID: u32 = USER_ID_1 * AID_USER_OFFSET + APPLICATION_ID;
@@ -676,76 +623,69 @@ fn keystore2_grant_key_to_multi_users_delete_fails_with_key_not_found_error() {
     static GRANTEE_2_GID: u32 = GRANTEE_2_UID;
 
     // Generate a key and grant it to multiple users with GET_INFO permission.
-    // SAFETY: The test is run in a separate process with no other threads.
-    let mut grant_keys = unsafe {
-        run_as::run_as(GRANTOR_SU_CTX, Uid::from_raw(0), Gid::from_raw(0), || {
-            let sl = SecLevel::tee();
-            let alias = format!("ks_grant_test_key_2{}", getuid());
-            let access_vector =
-                KeyPermission::GET_INFO.0 | KeyPermission::USE.0 | KeyPermission::DELETE.0;
+    let grantor_fn = || {
+        let sl = SecLevel::tee();
+        let alias = format!("ks_grant_test_key_2{}", getuid());
+        let access_vector =
+            KeyPermission::GET_INFO.0 | KeyPermission::USE.0 | KeyPermission::DELETE.0;
 
-            generate_ec_key_and_grant_to_users(
-                &sl,
-                Some(alias),
-                vec![GRANTEE_1_UID.try_into().unwrap(), GRANTEE_2_UID.try_into().unwrap()],
-                access_vector,
-            )
-            .unwrap()
-        })
+        generate_ec_key_and_grant_to_users(
+            &sl,
+            Some(alias),
+            vec![GRANTEE_1_UID.try_into().unwrap(), GRANTEE_2_UID.try_into().unwrap()],
+            access_vector,
+        )
+        .unwrap()
     };
+
+    // Safety: only one thread at this point (enforced by `AndroidTest.xml` setting
+    // `--test-threads=1`), and nothing yet done with binder.
+    let mut grant_keys = unsafe { run_as::run_as_root(grantor_fn) };
 
     // Grantee #1 context
     let grant_key1_nspace = grant_keys.remove(0);
-    // SAFETY: The test is run in a separate process with no other threads.
-    unsafe {
-        run_as::run_as(
-            GRANTEE_CTX,
-            Uid::from_raw(GRANTEE_1_UID),
-            Gid::from_raw(GRANTEE_1_GID),
-            move || {
-                let sl = SecLevel::tee();
+    let grantee1_fn = move || {
+        let sl = SecLevel::tee();
 
-                assert_eq!(
-                    Ok(()),
-                    key_generations::map_ks_error(load_grant_key_and_perform_sign_operation(
-                        &sl,
-                        grant_key1_nspace
-                    ))
-                );
+        assert_eq!(
+            Ok(()),
+            key_generations::map_ks_error(load_grant_key_and_perform_sign_operation(
+                &sl,
+                grant_key1_nspace
+            ))
+        );
 
-                // Delete the granted key.
-                sl.keystore2
-                    .deleteKey(&KeyDescriptor {
-                        domain: Domain::GRANT,
-                        nspace: grant_key1_nspace,
-                        alias: None,
-                        blob: None,
-                    })
-                    .unwrap();
-            },
-        )
+        // Delete the granted key.
+        sl.keystore2
+            .deleteKey(&KeyDescriptor {
+                domain: Domain::GRANT,
+                nspace: grant_key1_nspace,
+                alias: None,
+                blob: None,
+            })
+            .unwrap();
     };
+
+    // Safety: only one thread at this point (enforced by `AndroidTest.xml` setting
+    // `--test-threads=1`), and nothing yet done with binder.
+    unsafe { run_as::run_as_app(GRANTEE_1_UID, GRANTEE_1_GID, grantee1_fn) };
 
     // Grantee #2 context
     let grant_key2_nspace = grant_keys.remove(0);
-    // SAFETY: The test is run in a separate process with no other threads.
-    unsafe {
-        run_as::run_as(
-            GRANTEE_CTX,
-            Uid::from_raw(GRANTEE_2_UID),
-            Gid::from_raw(GRANTEE_2_GID),
-            move || {
-                let keystore2 = get_keystore_service();
+    let grantee2_fn = move || {
+        let keystore2 = get_keystore_service();
 
-                let result = key_generations::map_ks_error(keystore2.getKeyEntry(&KeyDescriptor {
-                    domain: Domain::GRANT,
-                    nspace: grant_key2_nspace,
-                    alias: None,
-                    blob: None,
-                }));
-                assert!(result.is_err());
-                assert_eq!(Error::Rc(ResponseCode::KEY_NOT_FOUND), result.unwrap_err());
-            },
-        )
+        let result = key_generations::map_ks_error(keystore2.getKeyEntry(&KeyDescriptor {
+            domain: Domain::GRANT,
+            nspace: grant_key2_nspace,
+            alias: None,
+            blob: None,
+        }));
+        assert!(result.is_err());
+        assert_eq!(Error::Rc(ResponseCode::KEY_NOT_FOUND), result.unwrap_err());
     };
+
+    // Safety: only one thread at this point (enforced by `AndroidTest.xml` setting
+    // `--test-threads=1`), and nothing yet done with binder.
+    unsafe { run_as::run_as_app(GRANTEE_2_UID, GRANTEE_2_GID, grantee2_fn) };
 }

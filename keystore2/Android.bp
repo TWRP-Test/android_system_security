@@ -13,6 +13,7 @@
 // limitations under the License.
 
 package {
+    default_team: "trendy_team_android_hardware_backed_security",
     // See: http://go/android-license-faq
     // A large-scale-change added 'default_applicable_licenses' to import
     // all of the 'license_kinds' from "system_security_license"
@@ -59,6 +60,7 @@ rust_defaults {
         "liblibc",
         "liblog_rust",
         "libmessage_macro",
+        "libpostprocessor_client",
         "librand",
         "librkpd_client",
         "librustutils",

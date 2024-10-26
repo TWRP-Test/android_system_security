@@ -422,6 +422,50 @@ where
     }
 }
 
+/// Run the given closure in a new process running with the root identity.
+///
+/// # Safety
+/// run_as runs the given closure in the client branch of fork. And it uses non
+/// async signal safe API. This means that calling this function in a multi threaded program
+/// yields undefined behavior in the child. As of this writing, it is safe to call this function
+/// from a Rust device test, because every test itself is spawned as a separate process.
+///
+/// # Safety Binder
+/// It is okay for the closure to use binder services, however, this does not work
+/// if the parent initialized libbinder already. So do not use binder outside of the closure
+/// in your test.
+pub unsafe fn run_as_root<F, R>(f: F) -> R
+where
+    R: Serialize + DeserializeOwned,
+    F: 'static + Send + FnOnce() -> R,
+{
+    // SAFETY: Our caller guarantees that the process only has a single thread.
+    unsafe { run_as("u:r:su:s0", Uid::from_raw(0), Gid::from_raw(0), f) }
+}
+
+/// Run the given closure in a new `untrusted_app` process running with the given `uid` and `gid`.
+///
+/// # Safety
+/// run_as runs the given closure in the client branch of fork. And it uses non
+/// async signal safe API. This means that calling this function in a multi threaded program
+/// yields undefined behavior in the child. As of this writing, it is safe to call this function
+/// from a Rust device test, because every test itself is spawned as a separate process.
+///
+/// # Safety Binder
+/// It is okay for the closure to use binder services, however, this does not work
+/// if the parent initialized libbinder already. So do not use binder outside of the closure
+/// in your test.
+pub unsafe fn run_as_app<F, R>(uid: u32, gid: u32, f: F) -> R
+where
+    R: Serialize + DeserializeOwned,
+    F: 'static + Send + FnOnce() -> R,
+{
+    // SAFETY: Our caller guarantees that the process only has a single thread.
+    unsafe {
+        run_as("u:r:untrusted_app:s0:c91,c256,c10,c20", Uid::from_raw(uid), Gid::from_raw(gid), f)
+    }
+}
+
 /// Run the given closure in a new process running with the new identity given as
 /// `uid`, `gid`, and `se_context`.
 ///

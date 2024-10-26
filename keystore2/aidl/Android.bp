@@ -123,6 +123,26 @@ aidl_interface {
 }
 
 aidl_interface {
+    name: "android.security.postprocessor",
+    srcs: ["android/security/postprocessor/*.aidl"],
+    unstable: true,
+    backend: {
+        java: {
+            enabled: false,
+        },
+        cpp: {
+            enabled: false,
+        },
+        ndk: {
+            enabled: false,
+        },
+        rust: {
+            enabled: true,
+        },
+    },
+}
+
+aidl_interface {
     name: "android.security.metrics",
     srcs: ["android/security/metrics/*.aidl"],
     imports: [
