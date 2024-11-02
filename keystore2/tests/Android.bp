@@ -31,8 +31,8 @@ rust_test {
     static_libs: [
         // Also include static_libs for the NDK variants so that they are available
         // for dependencies.
-        "android.system.keystore2-V4-ndk",
-        "android.hardware.security.keymint-V3-ndk",
+        "android.system.keystore2-V5-ndk",
+        "android.hardware.security.keymint-V4-ndk",
     ],
     srcs: ["keystore2_client_tests.rs"],
     test_suites: [

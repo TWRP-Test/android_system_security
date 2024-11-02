@@ -271,17 +271,8 @@ fn connect_keymint(
     // If the KeyMint device is back-level, use a wrapper that intercepts and
     // emulates things that are not supported by the hardware.
     let keymint = match hal_version {
-        Some(300) => {
-            // Current KeyMint version: use as-is as v3 Keymint is current version
-            log::info!(
-                "KeyMint device is current version ({:?}) for security level: {:?}",
-                hal_version,
-                security_level
-            );
-            keymint
-        }
-        Some(200) => {
-            // Previous KeyMint version: use as-is as we don't have any software emulation of v3-specific KeyMint features.
+        Some(400) | Some(300) | Some(200) => {
+            // KeyMint v2+: use as-is (we don't have any software emulation of v3 or v4-specific KeyMint features).
             log::info!(
                 "KeyMint device is current version ({:?}) for security level: {:?}",
                 hal_version,
