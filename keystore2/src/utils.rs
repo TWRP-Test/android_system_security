@@ -80,6 +80,7 @@ pub fn check_keystore_permission(perm: KeystorePerm) -> anyhow::Result<()> {
 pub fn check_grant_permission(access_vec: KeyPermSet, key: &KeyDescriptor) -> anyhow::Result<()> {
     ThreadState::with_calling_sid(|calling_sid| {
         permission::check_grant_permission(
+            ThreadState::get_calling_uid(),
             calling_sid
                 .ok_or_else(Error::sys)
                 .context(ks_err!("Cannot check permission without calling_sid."))?,

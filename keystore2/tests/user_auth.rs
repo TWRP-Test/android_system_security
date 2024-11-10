@@ -43,12 +43,9 @@ use keystore2_test_utils::{
     run_as::{ChannelReader, ChannelWriter}, expect_km_error,
 };
 use log::{warn, info};
-use nix::unistd::{Gid, Uid};
 use rustutils::users::AID_USER_OFFSET;
 use std::{time::Duration, thread::sleep};
 
-/// SELinux context.
-const CTX: &str = "u:r:untrusted_app:s0:c91,c256,c10,c20";
 /// Test user ID.
 const TEST_USER_ID: i32 = 100;
 /// Corresponding uid value.
@@ -263,7 +260,7 @@ fn test_auth_bound_timeout_with_gk() {
     // `--test-threads=1`), and nothing yet done with binder.
     let mut child_handle = unsafe {
         // Perform keystore actions while running as the test user.
-        run_as::run_as_child(CTX, Uid::from_raw(UID), Gid::from_raw(UID), child_fn)
+        run_as::run_as_child_app(UID, UID, child_fn)
     }
     .unwrap();
 
@@ -385,7 +382,7 @@ fn test_auth_bound_timeout_failure() {
     // `--test-threads=1`), and nothing yet done with binder.
     let mut child_handle = unsafe {
         // Perform keystore actions while running as the test user.
-        run_as::run_as_child(CTX, Uid::from_raw(UID), Gid::from_raw(UID), child_fn)
+        run_as::run_as_child_app(UID, UID, child_fn)
     }
     .unwrap();
 
@@ -514,7 +511,7 @@ fn test_auth_bound_per_op_with_gk() {
     // `--test-threads=1`), and nothing yet done with binder.
     let mut child_handle = unsafe {
         // Perform keystore actions while running as the test user.
-        run_as::run_as_child(CTX, Uid::from_raw(UID), Gid::from_raw(UID), child_fn)
+        run_as::run_as_child_app(UID, UID, child_fn)
     }
     .unwrap();
 
@@ -659,7 +656,7 @@ fn test_auth_bound_per_op_failure() {
     // `--test-threads=1`), and nothing yet done with binder.
     let mut child_handle = unsafe {
         // Perform keystore actions while running as the test user.
-        run_as::run_as_child(CTX, Uid::from_raw(UID), Gid::from_raw(UID), child_fn)
+        run_as::run_as_child_app(UID, UID, child_fn)
     }
     .unwrap();
 
@@ -788,7 +785,7 @@ fn test_unlocked_device_required() {
     // `--test-threads=1`), and nothing yet done with binder.
     let mut child_handle = unsafe {
         // Perform keystore actions while running as the test user.
-        run_as::run_as_child(CTX, Uid::from_raw(UID), Gid::from_raw(UID), child_fn)
+        run_as::run_as_child_app(UID, UID, child_fn)
     }
     .unwrap();
 

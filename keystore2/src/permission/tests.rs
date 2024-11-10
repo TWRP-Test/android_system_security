@@ -135,11 +135,11 @@ fn check_keystore_permission_test() -> Result<()> {
 fn check_grant_permission_app() -> Result<()> {
     let system_server_ctx = Context::new("u:r:system_server:s0")?;
     let key = KeyDescriptor { domain: Domain::APP, nspace: 0, alias: None, blob: None };
-    check_grant_permission(&system_server_ctx, SYSTEM_SERVER_PERMISSIONS_NO_GRANT, &key)
+    check_grant_permission(0, &system_server_ctx, SYSTEM_SERVER_PERMISSIONS_NO_GRANT, &key)
         .expect("Grant permission check failed.");
 
     // attempts to grant the grant permission must always fail even when privileged.
-    assert_perm_failed!(check_grant_permission(&system_server_ctx, KeyPerm::Grant.into(), &key));
+    assert_perm_failed!(check_grant_permission(0, &system_server_ctx, KeyPerm::Grant.into(), &key));
     Ok(())
 }
 
@@ -153,12 +153,12 @@ fn check_grant_permission_selinux() -> Result<()> {
         blob: None,
     };
     if is_su {
-        assert!(check_grant_permission(&sctx, NOT_GRANT_PERMS, &key).is_ok());
+        assert!(check_grant_permission(0, &sctx, NOT_GRANT_PERMS, &key).is_ok());
         // attempts to grant the grant permission must always fail even when privileged.
-        assert_perm_failed!(check_grant_permission(&sctx, KeyPerm::Grant.into(), &key));
+        assert_perm_failed!(check_grant_permission(0, &sctx, KeyPerm::Grant.into(), &key));
     } else {
         // unprivileged grant attempts always fail. shell does not have the grant permission.
-        assert_perm_failed!(check_grant_permission(&sctx, UNPRIV_PERMS, &key));
+        assert_perm_failed!(check_grant_permission(0, &sctx, UNPRIV_PERMS, &key));
     }
     Ok(())
 }

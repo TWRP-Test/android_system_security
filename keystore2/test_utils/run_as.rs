@@ -352,6 +352,40 @@ impl<R: Serialize + DeserializeOwned, M: Serialize + DeserializeOwned> Drop for 
     }
 }
 
+/// Run the given closure in a new process running as an untrusted app with the given `uid` and
+/// `gid`. Parent process will run without waiting for child status.
+///
+/// # Safety
+/// run_as_child runs the given closure in the client branch of fork. And it uses non
+/// async signal safe API. This means that calling this function in a multi threaded program
+/// yields undefined behavior in the child. As of this writing, it is safe to call this function
+/// from a Rust device test, because every test itself is spawned as a separate process.
+///
+/// # Safety Binder
+/// It is okay for the closure to use binder services, however, this does not work
+/// if the parent initialized libbinder already. So do not use binder outside of the closure
+/// in your test.
+pub unsafe fn run_as_child_app<F, R, M>(
+    uid: u32,
+    gid: u32,
+    f: F,
+) -> Result<ChildHandle<R, M>, nix::Error>
+where
+    R: Serialize + DeserializeOwned,
+    M: Serialize + DeserializeOwned,
+    F: 'static + Send + FnOnce(&mut ChannelReader<M>, &mut ChannelWriter<M>) -> R,
+{
+    // Safety: Caller guarantees that the process only has a single thread.
+    unsafe {
+        run_as_child(
+            "u:r:untrusted_app:s0:c91,c256,c10,c20",
+            Uid::from_raw(uid),
+            Gid::from_raw(gid),
+            f,
+        )
+    }
+}
+
 /// Run the given closure in a new process running with the new identity given as
 /// `uid`, `gid`, and `se_context`. Parent process will run without waiting for child status.
 ///
@@ -383,7 +417,7 @@ where
     let (response_reader, mut response_writer) =
         pipe_channel().expect("Failed to create cmd pipe.");
 
-    // SAFETY: Our caller guarantees that the process only has a single thread, so calling
+    // Safety: Our caller guarantees that the process only has a single thread, so calling
     // non-async-signal-safe functions in the child is in fact safe.
     match unsafe { fork() } {
         Ok(ForkResult::Parent { child, .. }) => {

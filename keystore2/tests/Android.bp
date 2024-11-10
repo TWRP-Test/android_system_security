@@ -36,6 +36,7 @@ rust_test {
     ],
     srcs: ["keystore2_client_tests.rs"],
     test_suites: [
+        "automotive-sdv-tests",
         "general-tests",
         "vts",
     ],

@@ -472,6 +472,13 @@ fn keystore2_gen_key_auth_early_boot_only_op_fail() {
 #[test]
 fn keystore2_gen_key_auth_max_uses_per_boot() {
     let sl = SecLevel::tee();
+    if sl.is_keymaster() {
+        // Older devices with Keymaster implementation may use the key during generateKey to export
+        // the generated public key (EC Key), leading to an unnecessary increment of the
+        // key-associated counter. This can cause the test to fail, so skipping this test on older
+        // devices to avoid test failure.
+        return;
+    }
     const MAX_USES_COUNT: i32 = 3;
 
     let gen_params = authorizations::AuthSetBuilder::new()

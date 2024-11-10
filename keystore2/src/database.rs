@@ -125,6 +125,14 @@ impl TransactionBehavior {
     }
 }
 
+/// Access information for a key.
+#[derive(Debug)]
+struct KeyAccessInfo {
+    key_id: i64,
+    descriptor: KeyDescriptor,
+    vector: Option<KeyPermSet>,
+}
+
 /// If the database returns a busy error code, retry after this interval.
 const DB_BUSY_RETRY_INTERVAL: Duration = Duration::from_micros(500);
 
@@ -2071,7 +2079,7 @@ impl KeystoreDB {
         key: &KeyDescriptor,
         key_type: KeyType,
         caller_uid: u32,
-    ) -> Result<(i64, KeyDescriptor, Option<KeyPermSet>)> {
+    ) -> Result<KeyAccessInfo> {
         match key.domain {
             // Domain App or SELinux. In this case we load the key_id from
             // the keyentry database for further loading of key components.
@@ -2087,7 +2095,7 @@ impl KeystoreDB {
                 let key_id = Self::load_key_entry_id(tx, &access_key, key_type)
                     .with_context(|| format!("With key.domain = {:?}.", access_key.domain))?;
 
-                Ok((key_id, access_key, None))
+                Ok(KeyAccessInfo { key_id, descriptor: access_key, vector: None })
             }
 
             // Domain::GRANT. In this case we load the key_id and the access_vector
@@ -2113,7 +2121,11 @@ impl KeystoreDB {
                         ))
                     })
                     .context("Domain::GRANT.")?;
-                Ok((key_id, key.clone(), Some(access_vector.into())))
+                Ok(KeyAccessInfo {
+                    key_id,
+                    descriptor: key.clone(),
+                    vector: Some(access_vector.into()),
+                })
             }
 
             // Domain::KEY_ID. In this case we load the domain and namespace from the
@@ -2169,7 +2181,7 @@ impl KeystoreDB {
                 access_key.domain = domain;
                 access_key.nspace = namespace;
 
-                Ok((key_id, access_key, access_vector))
+                Ok(KeyAccessInfo { key_id, descriptor: access_key, vector: access_vector })
             }
             _ => Err(anyhow!(KsError::Rc(ResponseCode::INVALID_ARGUMENT))),
         }
@@ -2356,12 +2368,11 @@ impl KeystoreDB {
             .context(ks_err!("Failed to initialize transaction."))?;
 
         // Load the key_id and complete the access control tuple.
-        let (key_id, access_key_descriptor, access_vector) =
-            Self::load_access_tuple(&tx, key, key_type, caller_uid).context(ks_err!())?;
+        let access = Self::load_access_tuple(&tx, key, key_type, caller_uid).context(ks_err!())?;
 
         // Perform access control. It is vital that we return here if the permission is denied.
         // So do not touch that '?' at the end.
-        check_permission(&access_key_descriptor, access_vector).context(ks_err!())?;
+        check_permission(&access.descriptor, access.vector).context(ks_err!())?;
 
         // KEY ID LOCK 2/2
         // If we did not get a key id lock by now, it was because we got a key descriptor
@@ -2375,13 +2386,13 @@ impl KeystoreDB {
         // that the caller had access to the given key. But we need to make sure that the
         // key id still exists. So we have to load the key entry by key id this time.
         let (key_id_guard, tx) = match key_id_guard {
-            None => match KEY_ID_LOCK.try_get(key_id) {
+            None => match KEY_ID_LOCK.try_get(access.key_id) {
                 None => {
                     // Roll back the transaction.
                     tx.rollback().context(ks_err!("Failed to roll back transaction."))?;
 
                     // Block until we have a key id lock.
-                    let key_id_guard = KEY_ID_LOCK.get(key_id);
+                    let key_id_guard = KEY_ID_LOCK.get(access.key_id);
 
                     // Create a new transaction.
                     let tx = self
@@ -2395,7 +2406,7 @@ impl KeystoreDB {
                         // alias may have been rebound after we rolled back the transaction.
                         &KeyDescriptor {
                             domain: Domain::KEY_ID,
-                            nspace: key_id,
+                            nspace: access.key_id,
                             ..Default::default()
                         },
                         key_type,
@@ -2451,16 +2462,15 @@ impl KeystoreDB {
         let _wp = wd::watch("KeystoreDB::unbind_key");
 
         self.with_transaction(Immediate("TX_unbind_key"), |tx| {
-            let (key_id, access_key_descriptor, access_vector) =
-                Self::load_access_tuple(tx, key, key_type, caller_uid)
-                    .context("Trying to get access tuple.")?;
+            let access = Self::load_access_tuple(tx, key, key_type, caller_uid)
+                .context("Trying to get access tuple.")?;
 
             // Perform access control. It is vital that we return here if the permission is denied.
             // So do not touch that '?' at the end.
-            check_permission(&access_key_descriptor, access_vector)
+            check_permission(&access.descriptor, access.vector)
                 .context("While checking permission.")?;
 
-            Self::mark_unreferenced(tx, key_id)
+            Self::mark_unreferenced(tx, access.key_id)
                 .map(|need_gc| (need_gc, ()))
                 .context("Trying to mark the key unreferenced.")
         })
@@ -2830,7 +2840,7 @@ impl KeystoreDB {
             // We could check key.domain == Domain::GRANT and fail early.
             // But even if we load the access tuple by grant here, the permission
             // check denies the attempt to create a grant by grant descriptor.
-            let (key_id, access_key_descriptor, _) =
+            let access =
                 Self::load_access_tuple(tx, key, KeyType::Client, caller_uid).context(ks_err!())?;
 
             // Perform access control. It is vital that we return here if the permission
@@ -2838,14 +2848,14 @@ impl KeystoreDB {
             // This permission check checks if the caller has the grant permission
             // for the given key and in addition to all of the permissions
             // expressed in `access_vector`.
-            check_permission(&access_key_descriptor, &access_vector)
+            check_permission(&access.descriptor, &access_vector)
                 .context(ks_err!("check_permission failed"))?;
 
             let grant_id = if let Some(grant_id) = tx
                 .query_row(
                     "SELECT id FROM persistent.grant
                 WHERE keyentryid = ? AND grantee = ?;",
-                    params![key_id, grantee_uid],
+                    params![access.key_id, grantee_uid],
                     |row| row.get(0),
                 )
                 .optional()
@@ -2864,7 +2874,7 @@ impl KeystoreDB {
                     tx.execute(
                         "INSERT INTO persistent.grant (id, grantee, keyentryid, access_vector)
                         VALUES (?, ?, ?, ?);",
-                        params![id, grantee_uid, key_id, i32::from(access_vector)],
+                        params![id, grantee_uid, access.key_id, i32::from(access_vector)],
                     )
                 })
                 .context(ks_err!())?
@@ -2889,18 +2899,17 @@ impl KeystoreDB {
         self.with_transaction(Immediate("TX_ungrant"), |tx| {
             // Load the key_id and complete the access control tuple.
             // We ignore the access vector here because grants cannot be granted.
-            let (key_id, access_key_descriptor, _) =
+            let access =
                 Self::load_access_tuple(tx, key, KeyType::Client, caller_uid).context(ks_err!())?;
 
             // Perform access control. We must return here if the permission
             // was denied. So do not touch the '?' at the end of this line.
-            check_permission(&access_key_descriptor)
-                .context(ks_err!("check_permission failed."))?;
+            check_permission(&access.descriptor).context(ks_err!("check_permission failed."))?;
 
             tx.execute(
                 "DELETE FROM persistent.grant
                 WHERE keyentryid = ? AND grantee = ?;",
-                params![key_id, grantee_uid],
+                params![access.key_id, grantee_uid],
             )
             .context("Failed to delete grant.")?;
 

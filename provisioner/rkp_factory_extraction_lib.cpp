@@ -261,7 +261,9 @@ std::unordered_set<std::string> parseCommaDelimited(const std::string& input) {
     while (ss.good()) {
         std::string name;
         std::getline(ss, name, ',');
-        result.insert(name);
+        if (!name.empty()) {
+            result.insert(name);
+        }
     }
     return result;
 }

@@ -336,7 +336,8 @@ TEST(LibRkpFactoryExtractionTests, parseCommaDelimitedString) {
     const auto& rpcNames = "default,avf,,default,Strongbox,strongbox,,";
     const auto& rpcSet = parseCommaDelimited(rpcNames);
 
-    ASSERT_EQ(rpcSet.size(), 5);
+    ASSERT_EQ(rpcSet.size(), 4);
+    ASSERT_TRUE(rpcSet.count("") == 0);
     ASSERT_TRUE(rpcSet.count("default") == 1);
     ASSERT_TRUE(rpcSet.count("avf") == 1);
     ASSERT_TRUE(rpcSet.count("strongbox") == 1);

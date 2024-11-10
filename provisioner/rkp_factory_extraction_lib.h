@@ -27,6 +27,7 @@
 #include <vector>
 
 // Parse a comma-delimited string.
+// Ignores any empty strings.
 std::unordered_set<std::string> parseCommaDelimited(const std::string& input);
 
 // Challenge size must be between 32 and 64 bytes inclusive.
