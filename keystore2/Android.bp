@@ -183,6 +183,12 @@ java_aconfig_library {
     host_supported: true,
 }
 
+java_aconfig_library {
+    name: "keystore2_flags_java-framework",
+    aconfig_declarations: "keystore2_flags",
+    defaults: ["framework-minus-apex-aconfig-java-defaults"],
+}
+
 rust_aconfig_library {
     name: "libkeystore2_flags_rust",
     crate_name: "keystore2_flags",

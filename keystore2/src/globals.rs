@@ -165,6 +165,8 @@ pub static LEGACY_IMPORTER: LazyLock<Arc<LegacyImporter>> =
     LazyLock::new(|| Arc::new(LegacyImporter::new(Arc::new(Default::default()))));
 /// Background thread which handles logging via statsd and logd
 pub static LOGS_HANDLER: LazyLock<Arc<AsyncTask>> = LazyLock::new(Default::default);
+/// DER-encoded module information returned by `getSupplementaryAttestationInfo(Tag.MODULE_HASH)`.
+pub static ENCODED_MODULE_INFO: RwLock<Option<Vec<u8>>> = RwLock::new(None);
 
 static GC: LazyLock<Arc<Gc>> = LazyLock::new(|| {
     Arc::new(Gc::new_init_with(ASYNC_TASK.clone(), || {

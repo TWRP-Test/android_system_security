@@ -26,7 +26,6 @@
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 #include <openssl/base64.h>
-#include <remote_prov/MockIRemotelyProvisionedComponent.h>
 
 #include <cstdint>
 #include <memory>
@@ -85,6 +84,27 @@ std::string toBase64(const std::vector<uint8_t>& buffer) {
 
     return base64;
 }
+
+class MockIRemotelyProvisionedComponent : public IRemotelyProvisionedComponentDefault {
+  public:
+    MOCK_METHOD(ScopedAStatus, getHardwareInfo, (RpcHardwareInfo * _aidl_return), (override));
+    MOCK_METHOD(ScopedAStatus, generateEcdsaP256KeyPair,
+                (bool in_testMode, MacedPublicKey* out_macedPublicKey,
+                 std::vector<uint8_t>* _aidl_return),
+                (override));
+    MOCK_METHOD(ScopedAStatus, generateCertificateRequest,
+                (bool in_testMode, const std::vector<MacedPublicKey>& in_keysToSign,
+                 const std::vector<uint8_t>& in_endpointEncryptionCertChain,
+                 const std::vector<uint8_t>& in_challenge, DeviceInfo* out_deviceInfo,
+                 ProtectedData* out_protectedData, std::vector<uint8_t>* _aidl_return),
+                (override));
+    MOCK_METHOD(ScopedAStatus, generateCertificateRequestV2,
+                (const std::vector<MacedPublicKey>& in_keysToSign,
+                 const std::vector<uint8_t>& in_challenge, std::vector<uint8_t>* _aidl_return),
+                (override));
+    MOCK_METHOD(ScopedAStatus, getInterfaceVersion, (int32_t* _aidl_return), (override));
+    MOCK_METHOD(ScopedAStatus, getInterfaceHash, (std::string * _aidl_return), (override));
+};
 
 TEST(LibRkpFactoryExtractionTests, ToBase64) {
     std::vector<uint8_t> input(UINT8_MAX + 1);
@@ -165,7 +185,7 @@ TEST(LibRkpFactoryExtractionTests, GetCsrWithV2Hal) {
     std::vector<uint8_t> challenge;
 
     // Set up mock, then call getSCsr
-    auto mockRpc = SharedRefBase::make<remote_prov::MockIRemotelyProvisionedComponent>();
+    auto mockRpc = SharedRefBase::make<MockIRemotelyProvisionedComponent>();
     EXPECT_CALL(*mockRpc, getHardwareInfo(NotNull())).WillRepeatedly([](RpcHardwareInfo* hwInfo) {
         hwInfo->versionNumber = 2;
         return ScopedAStatus::ok();
@@ -244,7 +264,7 @@ TEST(LibRkpFactoryExtractionTests, GetCsrWithV3Hal) {
     std::vector<uint8_t> challenge;
 
     // Set up mock, then call getCsr
-    auto mockRpc = SharedRefBase::make<remote_prov::MockIRemotelyProvisionedComponent>();
+    auto mockRpc = SharedRefBase::make<MockIRemotelyProvisionedComponent>();
     EXPECT_CALL(*mockRpc, getHardwareInfo(NotNull())).WillRepeatedly([](RpcHardwareInfo* hwInfo) {
         hwInfo->versionNumber = 3;
         return ScopedAStatus::ok();
@@ -284,7 +304,7 @@ TEST(LibRkpFactoryExtractionTests, requireUdsCerts) {
     std::vector<uint8_t> challenge;
 
     // Set up mock, then call getCsr
-    auto mockRpc = SharedRefBase::make<remote_prov::MockIRemotelyProvisionedComponent>();
+    auto mockRpc = SharedRefBase::make<MockIRemotelyProvisionedComponent>();
     EXPECT_CALL(*mockRpc, getHardwareInfo(NotNull())).WillRepeatedly([](RpcHardwareInfo* hwInfo) {
         hwInfo->versionNumber = 3;
         return ScopedAStatus::ok();
@@ -313,7 +333,7 @@ TEST(LibRkpFactoryExtractionTests, dontRequireUdsCerts) {
     std::vector<uint8_t> challenge;
 
     // Set up mock, then call getCsr
-    auto mockRpc = SharedRefBase::make<remote_prov::MockIRemotelyProvisionedComponent>();
+    auto mockRpc = SharedRefBase::make<MockIRemotelyProvisionedComponent>();
     EXPECT_CALL(*mockRpc, getHardwareInfo(NotNull())).WillRepeatedly([](RpcHardwareInfo* hwInfo) {
         hwInfo->versionNumber = 3;
         return ScopedAStatus::ok();

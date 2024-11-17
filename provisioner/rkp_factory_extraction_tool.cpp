@@ -35,7 +35,6 @@
 using aidl::android::hardware::drm::IDrmFactory;
 using aidl::android::hardware::security::keymint::IRemotelyProvisionedComponent;
 using aidl::android::hardware::security::keymint::RpcHardwareInfo;
-using aidl::android::hardware::security::keymint::remote_prov::deviceSuffix;
 using aidl::android::hardware::security::keymint::remote_prov::jsonEncodeCsrWithBuild;
 using aidl::android::hardware::security::keymint::remote_prov::RKPVM_INSTANCE_NAME;
 
@@ -86,9 +85,10 @@ void writeOutput(const std::string instance_name, const cppbor::Array& csr) {
 
 void getCsrForIRpc(const char* descriptor, const char* name, IRemotelyProvisionedComponent* irpc,
                    bool requireUdsCerts) {
+    auto fullName = getFullServiceName(descriptor, name);
     // AVF RKP HAL is not always supported, so we need to check if it is supported before
     // generating the CSR.
-    if (std::string(name) == deviceSuffix(RKPVM_INSTANCE_NAME)) {
+    if (fullName == RKPVM_INSTANCE_NAME) {
         RpcHardwareInfo hwInfo;
         auto status = irpc->getHardwareInfo(&hwInfo);
         if (!status.isOk()) {
@@ -99,7 +99,6 @@ void getCsrForIRpc(const char* descriptor, const char* name, IRemotelyProvisione
     auto [request, errMsg] =
         getCsr(name, irpc, FLAGS_self_test, FLAGS_allow_degenerate, requireUdsCerts);
     if (!request) {
-        auto fullName = getFullServiceName(descriptor, name);
         std::cerr << "Unable to build CSR for '" << fullName << "': " << errMsg << ", exiting."
                   << std::endl;
         exit(-1);
@@ -149,7 +148,7 @@ int main(int argc, char** argv) {
     AServiceManager_forEachDeclaredInstance(IRemotelyProvisionedComponent::descriptor,
                                             &requireUdsCertsRpcNames, getCsrForInstance);
 
-    // Append drm csr's
+    // Append drm CSRs
     for (auto const& [name, irpc] : android::mediadrm::getDrmRemotelyProvisionedComponents()) {
         auto requireUdsCerts = requireUdsCertsRpcNames.count(name) != 0;
         requireUdsCertsRpcNames.erase(name);

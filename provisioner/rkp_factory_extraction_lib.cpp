@@ -85,7 +85,7 @@ CborResult<Array> composeCertificateRequestV1(const ProtectedData& protectedData
                                               const DeviceInfo& verifiedDeviceInfo,
                                               const std::vector<uint8_t>& challenge,
                                               const std::vector<uint8_t>& keysToSignMac,
-                                              IRemotelyProvisionedComponent* provisionable) {
+                                              const RpcHardwareInfo& rpcHardwareInfo) {
     Array macedKeysToSign = Array()
                                 .add(Map().add(1, 5).encode())  // alg: hmac-sha256
                                 .add(Map())                     // empty unprotected headers
@@ -93,7 +93,7 @@ CborResult<Array> composeCertificateRequestV1(const ProtectedData& protectedData
                                 .add(keysToSignMac);            // MAC as returned from the HAL
 
     ErrMsgOr<std::unique_ptr<Map>> parsedVerifiedDeviceInfo =
-        parseAndValidateFactoryDeviceInfo(verifiedDeviceInfo.deviceInfo, provisionable);
+        parseAndValidateFactoryDeviceInfo(verifiedDeviceInfo.deviceInfo, rpcHardwareInfo);
     if (!parsedVerifiedDeviceInfo) {
         return {nullptr, parsedVerifiedDeviceInfo.moveMessage()};
     }
@@ -139,7 +139,7 @@ CborResult<Array> getCsrV1(std::string_view componentName, IRemotelyProvisionedC
         return {nullptr, status.getDescription()};
     }
     return composeCertificateRequestV1(protectedData, verifiedDeviceInfo, challenge, keysToSignMac,
-                                       irpc);
+                                       hwInfo);
 }
 
 std::optional<std::string> selfTestGetCsrV1(std::string_view componentName,
@@ -172,9 +172,9 @@ std::optional<std::string> selfTestGetCsrV1(std::string_view componentName,
         return status.getDescription();
     }
 
-    auto result = verifyFactoryProtectedData(
-        verifiedDeviceInfo, /*keysToSign=*/{}, keysToSignMac, protectedData, *eekChain, eekId,
-        hwInfo.supportedEekCurve, irpc, std::string(componentName), challenge);
+    auto result = verifyFactoryProtectedData(verifiedDeviceInfo, /*keysToSign=*/{}, keysToSignMac,
+                                             protectedData, *eekChain, eekId, hwInfo,
+                                             std::string(componentName), challenge);
 
     if (!result) {
         std::cerr << "Self test failed for IRemotelyProvisionedComponent '" << componentName
@@ -211,7 +211,15 @@ CborResult<Array> getCsrV3(std::string_view componentName, IRemotelyProvisionedC
     std::vector<MacedPublicKey> emptyKeys;
     const std::vector<uint8_t> challenge = generateChallenge();
 
-    auto status = irpc->generateCertificateRequestV2(emptyKeys, challenge, &csr);
+    RpcHardwareInfo hwInfo;
+    auto status = irpc->getHardwareInfo(&hwInfo);
+    if (!status.isOk()) {
+        std::cerr << "Failed to get hardware info for '" << componentName
+                  << "'. Description: " << status.getDescription() << "." << std::endl;
+        return {nullptr, status.getDescription()};
+    }
+
+    status = irpc->generateCertificateRequestV2(emptyKeys, challenge, &csr);
     if (!status.isOk()) {
         std::cerr << "Bundle extraction failed for '" << componentName
                   << "'. Description: " << status.getDescription() << "." << std::endl;
@@ -219,9 +227,9 @@ CborResult<Array> getCsrV3(std::string_view componentName, IRemotelyProvisionedC
     }
 
     if (selfTest) {
-        auto result =
-            verifyFactoryCsr(/*keysToSign=*/cppbor::Array(), csr, irpc, std::string(componentName),
-                             challenge, allowDegenerate, requireUdsCerts);
+        auto result = verifyFactoryCsr(/*keysToSign=*/cppbor::Array(), csr, hwInfo,
+                                       std::string(componentName), challenge, allowDegenerate,
+                                       requireUdsCerts);
         if (!result) {
             std::cerr << "Self test failed for IRemotelyProvisionedComponent '" << componentName
                       << "'. Error message: '" << result.message() << "'." << std::endl;
