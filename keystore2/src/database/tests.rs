@@ -2832,6 +2832,7 @@ fn test_list_keys_with_many_keys() -> Result<()> {
             let batch_size = crate::utils::estimate_safe_amount_to_return(
                 domain,
                 namespace,
+                None,
                 &keys,
                 crate::utils::RESPONSE_SIZE_LIMIT,
             );
