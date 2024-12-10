@@ -50,6 +50,8 @@ rust_defaults {
         "libandroid_security_flags_rust",
         "libanyhow",
         "libbinder_rs",
+        "libbssl_crypto",
+        "libder",
         "libkeystore2_aaid-rust",
         "libkeystore2_apc_compat-rust",
         "libkeystore2_crypto_rust",
