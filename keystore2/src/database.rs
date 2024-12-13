@@ -3049,4 +3049,11 @@ impl KeystoreDB {
         let app_uids_vec: Vec<i64> = app_uids_affected_by_sid.into_iter().collect();
         Ok(app_uids_vec)
     }
+
+    /// Retrieve a database PRAGMA config value.
+    pub fn pragma<T: FromSql>(&mut self, name: &str) -> Result<T> {
+        self.conn
+            .query_row(&format!("PRAGMA persistent.{name}"), (), |row| row.get(0))
+            .context(format!("failed to read pragma {name}"))
+    }
 }

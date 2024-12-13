@@ -351,6 +351,34 @@ impl Maintenance {
         }
         writeln!(f)?;
 
+        // Display database config information.
+        writeln!(f, "Database configuration:")?;
+        DB.with(|db| -> std::io::Result<()> {
+            let pragma_str = |f: &mut dyn std::io::Write, name| -> std::io::Result<()> {
+                let mut db = db.borrow_mut();
+                let value: String = db
+                    .pragma(name)
+                    .unwrap_or_else(|e| format!("unknown value for '{name}', failed: {e:?}"));
+                writeln!(f, "  {name} = {value}")
+            };
+            let pragma_i32 = |f: &mut dyn std::io::Write, name| -> std::io::Result<()> {
+                let mut db = db.borrow_mut();
+                let value: i32 = db.pragma(name).unwrap_or_else(|e| {
+                    log::error!("unknown value for '{name}', failed: {e:?}");
+                    -1
+                });
+                writeln!(f, "  {name} = {value}")
+            };
+            pragma_i32(f, "auto_vacuum")?;
+            pragma_str(f, "journal_mode")?;
+            pragma_i32(f, "journal_size_limit")?;
+            pragma_i32(f, "synchronous")?;
+            pragma_i32(f, "schema_version")?;
+            pragma_i32(f, "user_version")?;
+            Ok(())
+        })?;
+        writeln!(f)?;
+
         // Display accumulated metrics.
         writeln!(f, "Metrics information:")?;
         writeln!(f)?;
