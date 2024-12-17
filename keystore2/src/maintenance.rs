@@ -50,6 +50,9 @@ use std::cmp::Ordering;
 /// Reexport Domain for the benefit of DeleteListener
 pub use android_system_keystore2::aidl::android::system::keystore2::Domain::Domain;
 
+#[cfg(test)]
+mod tests;
+
 /// Version number of KeyMint V4.
 pub const KEYMINT_V4: i32 = 400;
 
