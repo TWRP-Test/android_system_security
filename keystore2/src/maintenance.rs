@@ -19,7 +19,7 @@ use crate::error::into_logged_binder;
 use crate::error::map_km_error;
 use crate::error::Error;
 use crate::globals::get_keymint_device;
-use crate::globals::{DB, LEGACY_IMPORTER, SUPER_KEY, ENCODED_MODULE_INFO};
+use crate::globals::{DB, ENCODED_MODULE_INFO, LEGACY_IMPORTER, SUPER_KEY};
 use crate::ks_err;
 use crate::permission::{KeyPerm, KeystorePerm};
 use crate::super_key::SuperKeyManager;
@@ -29,6 +29,9 @@ use crate::utils::{
 };
 use android_hardware_security_keymint::aidl::android::hardware::security::keymint::{
     ErrorCode::ErrorCode, IKeyMintDevice::IKeyMintDevice, KeyParameter::KeyParameter, KeyParameterValue::KeyParameterValue, SecurityLevel::SecurityLevel, Tag::Tag,
+};
+use apex_aidl_interface::aidl::android::apex::{
+    IApexService::IApexService,
 };
 use android_security_maintenance::aidl::android::security::maintenance::IKeystoreMaintenance::{
     BnKeystoreMaintenance, IKeystoreMaintenance,
@@ -42,9 +45,11 @@ use android_security_metrics::aidl::android::security::metrics::{
 use android_system_keystore2::aidl::android::system::keystore2::KeyDescriptor::KeyDescriptor;
 use android_system_keystore2::aidl::android::system::keystore2::ResponseCode::ResponseCode;
 use anyhow::{anyhow, Context, Result};
+use binder::wait_for_interface;
 use bssl_crypto::digest;
 use der::{DerOrd, Encode, asn1::OctetString, asn1::SetOfVec, Sequence};
 use keystore2_crypto::Password;
+use rustutils::system_properties::PropertyWatcher;
 use std::cmp::Ordering;
 
 /// Reexport Domain for the benefit of DeleteListener
@@ -57,10 +62,10 @@ mod tests;
 pub const KEYMINT_V4: i32 = 400;
 
 /// Module information structure for DER-encoding.
-#[derive(Sequence, Debug)]
+#[derive(Sequence, Debug, PartialEq, Eq)]
 struct ModuleInfo {
     name: OctetString,
-    version: i32,
+    version: i64,
 }
 
 impl DerOrd for ModuleInfo {
@@ -242,7 +247,66 @@ impl Maintenance {
             log::error!("SUPER_KEY.set_up_boot_level_cache failed:\n{:?}\n:(", e);
         }
 
+        if keystore2_flags::attest_modules() {
+            std::thread::spawn(move || {
+                Self::watch_apex_info()
+                    .unwrap_or_else(|e| log::error!("watch_apex_info failed: {e:?}"));
+            });
+        }
         Maintenance::call_on_all_security_levels("earlyBootEnded", |dev| dev.earlyBootEnded(), None)
+    }
+
+    /// Watch the `apexd.status` system property, and read apex module information once
+    /// it is `activated`.
+    ///
+    /// Blocks waiting for system property changes, so must be run in its own thread.
+    fn watch_apex_info() -> Result<()> {
+        let prop = "apexd.status";
+        log::info!("start monitoring '{prop}' property");
+        let mut w = PropertyWatcher::new(prop).context(ks_err!("PropertyWatcher::new failed"))?;
+        loop {
+            let value = w.read(|_name, value| Ok(value.to_string()));
+            // The status for apexd moves from "starting" to "activated" to "ready"; the apex
+            // info file should be populated for either of the latter two states, so cope with
+            // both in case we miss a state change.
+            log::info!("property '{prop}' is now '{value:?}'");
+            if matches!(value.as_deref(), Ok("activated") | Ok("ready")) {
+                match Self::read_apex_info() {
+                    Ok(modules) => {
+                        Self::set_module_info(modules)
+                            .context(ks_err!("failed to set module info"))?;
+                        break;
+                    }
+                    Err(e) => {
+                        log::error!(
+                            "failed to read apex info, try again on next state change: {e:?}"
+                        );
+                    }
+                }
+            }
+
+            log::info!("await a change to '{prop}'...");
+            w.wait(None).context(ks_err!("property wait failed"))?;
+            log::info!("await a change to '{prop}'...notified");
+        }
+        Ok(())
+    }
+
+    fn read_apex_info() -> Result<Vec<ModuleInfo>> {
+        let _wp = wd::watch("read_apex_info via IApexService.getActivePackages()");
+        let apexd: Strong<dyn IApexService> =
+            wait_for_interface("apexservice").context("failed to AIDL connect to apexd")?;
+        let packages = apexd.getActivePackages().context("failed to retrieve active packages")?;
+        packages
+            .into_iter()
+            .map(|pkg| {
+                log::info!("apex modules += {} version {}", pkg.moduleName, pkg.versionCode);
+                let name = OctetString::new(pkg.moduleName.as_bytes()).map_err(|e| {
+                    anyhow!("failed to convert '{}' to OCTET_STRING: {e:?}", pkg.moduleName)
+                })?;
+                Ok(ModuleInfo { name, version: pkg.versionCode })
+            })
+            .collect()
     }
 
     fn migrate_key_namespace(source: &KeyDescriptor, destination: &KeyDescriptor) -> Result<()> {
@@ -329,6 +393,19 @@ impl Maintenance {
         }
         writeln!(f)?;
 
+        // Display module attestation information
+        {
+            let info = ENCODED_MODULE_INFO.read().unwrap();
+            if let Some(info) = info.as_ref() {
+                writeln!(f, "Attested module information (DER-encoded):")?;
+                writeln!(f, "  {}", hex::encode(info))?;
+                writeln!(f)?;
+            } else {
+                writeln!(f, "Attested module information not set")?;
+                writeln!(f)?;
+            }
+        }
+
         // Display database size information.
         match crate::metrics_store::pull_storage_stats() {
             Ok(atoms) => {
@@ -394,8 +471,8 @@ impl Maintenance {
         Ok(())
     }
 
-    #[allow(dead_code)]
     fn set_module_info(module_info: Vec<ModuleInfo>) -> Result<()> {
+        log::info!("set_module_info with {} modules", module_info.len());
         let encoding = Self::encode_module_info(module_info)
             .map_err(|e| anyhow!({ e }))
             .context(ks_err!("Failed to encode module_info"))?;
@@ -427,7 +504,6 @@ impl Maintenance {
         )
     }
 
-    #[allow(dead_code)]
     fn encode_module_info(module_info: Vec<ModuleInfo>) -> Result<Vec<u8>, der::Error> {
         SetOfVec::<ModuleInfo>::from_iter(module_info.into_iter())?.to_der()
     }
