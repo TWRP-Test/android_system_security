@@ -221,7 +221,8 @@ impl Maintenance {
                         && e.downcast_ref::<Error>()
                             == Some(&Error::Km(ErrorCode::HARDWARE_TYPE_UNAVAILABLE))
                     {
-                        log::info!("Call to {} failed for StrongBox as it is not available", name,)
+                        log::info!("Call to {} failed for StrongBox as it is not available", name);
+                        return Ok(());
                     } else {
                         log::error!(
                             "Call to {} failed for security level {}: {}.",
@@ -252,6 +253,9 @@ impl Maintenance {
                 Self::watch_apex_info()
                     .unwrap_or_else(|e| log::error!("watch_apex_info failed: {e:?}"));
             });
+        } else {
+            rustutils::system_properties::write("keystore.module_hash.sent", "true")
+                .context(ks_err!("failed to set keystore.module_hash.sent to true"))?;
         }
         Maintenance::call_on_all_security_levels("earlyBootEnded", |dev| dev.earlyBootEnded(), None)
     }
@@ -261,33 +265,24 @@ impl Maintenance {
     ///
     /// Blocks waiting for system property changes, so must be run in its own thread.
     fn watch_apex_info() -> Result<()> {
-        let prop = "apexd.status";
-        log::info!("start monitoring '{prop}' property");
-        let mut w = PropertyWatcher::new(prop).context(ks_err!("PropertyWatcher::new failed"))?;
+        let apex_prop = "apexd.status";
+        log::info!("start monitoring '{apex_prop}' property");
+        let mut w =
+            PropertyWatcher::new(apex_prop).context(ks_err!("PropertyWatcher::new failed"))?;
         loop {
             let value = w.read(|_name, value| Ok(value.to_string()));
-            // The status for apexd moves from "starting" to "activated" to "ready"; the apex
-            // info file should be populated for either of the latter two states, so cope with
-            // both in case we miss a state change.
-            log::info!("property '{prop}' is now '{value:?}'");
-            if matches!(value.as_deref(), Ok("activated") | Ok("ready")) {
-                match Self::read_apex_info() {
-                    Ok(modules) => {
-                        Self::set_module_info(modules)
-                            .context(ks_err!("failed to set module info"))?;
-                        break;
-                    }
-                    Err(e) => {
-                        log::error!(
-                            "failed to read apex info, try again on next state change: {e:?}"
-                        );
-                    }
-                }
+            log::info!("property '{apex_prop}' is now '{value:?}'");
+            if matches!(value.as_deref(), Ok("activated")) {
+                let modules =
+                    Self::read_apex_info().context(ks_err!("failed to read apex info"))?;
+                Self::set_module_info(modules).context(ks_err!("failed to set module info"))?;
+                rustutils::system_properties::write("keystore.module_hash.sent", "true")
+                    .context(ks_err!("failed to set keystore.module_hash.sent to true"))?;
+                break;
             }
-
-            log::info!("await a change to '{prop}'...");
+            log::info!("await a change to '{apex_prop}'...");
             w.wait(None).context(ks_err!("property wait failed"))?;
-            log::info!("await a change to '{prop}'...notified");
+            log::info!("await a change to '{apex_prop}'...notified");
         }
         Ok(())
     }
