@@ -27,6 +27,7 @@ use android_hardware_security_keymint::aidl::android::hardware::security::keymin
 };
 use android_hardware_security_keymint::aidl::android::hardware::security::keymint::{
     HardwareAuthToken::HardwareAuthToken, HardwareAuthenticatorType::HardwareAuthenticatorType,
+    KeyParameter::KeyParameter, KeyParameterValue::KeyParameterValue,
 };
 use android_hardware_security_secureclock::aidl::android::hardware::security::secureclock::{
     Timestamp::Timestamp
@@ -35,6 +36,8 @@ use android_system_keystore2::aidl::android::system::keystore2::{
     Domain::Domain, KeyDescriptor::KeyDescriptor, KeyMetadata::KeyMetadata,
     ResponseCode::ResponseCode,
 };
+use bssl_crypto::digest;
+use keystore_attestation::{AttestationExtension, ATTESTATION_EXTENSION_OID};
 use keystore2_test_utils::ffi_test_utils::get_value_from_attest_record;
 use keystore2_test_utils::{
     authorizations, get_keystore_auth_service, key_generations,
@@ -43,6 +46,7 @@ use keystore2_test_utils::{
 use openssl::bn::{BigNum, MsbOption};
 use openssl::x509::X509NameBuilder;
 use std::time::SystemTime;
+use x509_cert::{certificate::Certificate, der::Decode};
 
 fn gen_key_including_unique_id(sl: &SecLevel, alias: &str) -> Option<Vec<u8>> {
     let gen_params = authorizations::AuthSetBuilder::new()
@@ -995,4 +999,62 @@ fn keystore2_gen_key_auth_serial_number_subject_test_success() {
     );
     verify_certificate_serial_num(key_metadata.certificate.as_ref().unwrap(), &serial);
     delete_app_key(&sl.keystore2, alias).unwrap();
+}
+
+#[test]
+fn test_supplementary_attestation_info() {
+    if !keystore2_flags::attest_modules() {
+        // Module info is only populated if the flag is set.
+        return;
+    }
+    let sl = SecLevel::tee();
+
+    // Retrieve the input value that gets hashed into the attestation.
+    let module_info = sl
+        .keystore2
+        .getSupplementaryAttestationInfo(Tag::MODULE_HASH)
+        .expect("supplementary info for MODULE_HASH should be populated during startup");
+    let again = sl.keystore2.getSupplementaryAttestationInfo(Tag::MODULE_HASH).unwrap();
+    assert_eq!(again, module_info);
+    let want_hash = digest::Sha256::hash(&module_info).to_vec();
+
+    // Requesting other types of information should fail.
+    let result = key_generations::map_ks_error(
+        sl.keystore2.getSupplementaryAttestationInfo(Tag::BLOCK_MODE),
+    );
+    assert!(result.is_err());
+    assert_eq!(result.unwrap_err(), Error::Rc(ResponseCode::INVALID_ARGUMENT));
+
+    // Generate an attestation.
+    let alias = "ks_module_info_test";
+    let params = authorizations::AuthSetBuilder::new()
+        .no_auth_required()
+        .algorithm(Algorithm::EC)
+        .purpose(KeyPurpose::SIGN)
+        .purpose(KeyPurpose::VERIFY)
+        .digest(Digest::SHA_2_256)
+        .ec_curve(EcCurve::P_256)
+        .attestation_challenge(b"froop".to_vec());
+    let metadata = key_generations::generate_key(&sl, &params, alias)
+        .expect("failed key generation")
+        .expect("no metadata");
+    let cert_data = metadata.certificate.as_ref().unwrap();
+    let cert = Certificate::from_der(cert_data).expect("failed to parse X509 cert");
+    let exts = cert.tbs_certificate.extensions.expect("no X.509 extensions");
+    let ext = exts
+        .iter()
+        .find(|ext| ext.extn_id == ATTESTATION_EXTENSION_OID)
+        .expect("no attestation extension");
+    let ext = AttestationExtension::from_der(ext.extn_value.as_bytes())
+        .expect("failed to parse attestation extension");
+
+    // Find the attested module hash value.
+    let mut got_hash = None;
+    for auth in ext.sw_enforced.auths.into_owned().iter() {
+        if let KeyParameter { tag: Tag::MODULE_HASH, value: KeyParameterValue::Blob(hash) } = auth {
+            got_hash = Some(hash.clone());
+        }
+    }
+    let got_hash = got_hash.expect("no MODULE_HASH in sw_enforced");
+    assert_eq!(hex::encode(got_hash), hex::encode(want_hash));
 }

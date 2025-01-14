@@ -36,7 +36,6 @@ use openssl::bn::BigNum;
 use openssl::encrypt::Encrypter;
 use openssl::error::ErrorStack;
 use openssl::hash::MessageDigest;
-use openssl::nid::Nid;
 use openssl::pkey::PKey;
 use openssl::pkey::Public;
 use openssl::rsa::Padding;
@@ -45,6 +44,8 @@ use openssl::x509::X509;
 use packagemanager_aidl::aidl::android::content::pm::IPackageManagerNative::IPackageManagerNative;
 use serde::{Deserialize, Serialize};
 use std::process::{Command, Output};
+use std::str::FromStr;
+use x509_cert::{certificate::Certificate, der::Decode, name::Name};
 
 /// This enum is used to communicate between parent and child processes.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -609,14 +610,21 @@ pub fn get_attest_id_value(attest_id: Tag, prop_name: &str) -> Option<Vec<u8>> {
 }
 
 pub fn verify_certificate_subject_name(cert_bytes: &[u8], expected_subject: &[u8]) {
-    let cert = X509::from_der(cert_bytes).unwrap();
-    let subject = cert.subject_name();
-    let cn = subject.entries_by_nid(Nid::COMMONNAME).next().unwrap();
-    assert_eq!(cn.data().as_slice(), expected_subject);
+    let expected_subject = std::str::from_utf8(expected_subject).expect("non-UTF8 subject");
+    let want_subject = Name::from_str(&format!("CN={expected_subject}")).unwrap();
+    let cert = Certificate::from_der(cert_bytes).expect("failed to parse X509 cert");
+    assert_eq!(cert.tbs_certificate.subject, want_subject);
 }
 
 pub fn verify_certificate_serial_num(cert_bytes: &[u8], expected_serial_num: &BigNum) {
-    let cert = X509::from_der(cert_bytes).unwrap();
-    let serial_num = cert.serial_number();
-    assert_eq!(serial_num.to_bn().as_ref().unwrap(), expected_serial_num);
+    let mut want_serial = expected_serial_num.to_vec();
+    if !expected_serial_num.is_negative() && want_serial[0] & 0x80 == 0x80 {
+        // For a positive serial number (as required by RFC 5280 s4.1.2.2), if the top bit is set we
+        // need a prefix zero byte for ASN.1 encoding.
+        want_serial.insert(0, 0u8);
+    }
+
+    let cert = Certificate::from_der(cert_bytes).expect("failed to parse X509 cert");
+    let got_serial = cert.tbs_certificate.serial_number.as_bytes();
+    assert_eq!(got_serial, &want_serial);
 }
