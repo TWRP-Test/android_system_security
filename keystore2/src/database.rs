@@ -2440,8 +2440,10 @@ impl KeystoreDB {
             .context("Trying to delete grants.")?;
         // The associated blobentry rows are not immediately deleted when the owning keyentry is
         // removed, because a KeyMint `deleteKey()` invocation is needed (specifically for the
-        // `KEY_BLOB`).  Mark the affected rows with `state=Orphaned` so a subsequent garbage
-        // collection can do this.
+        // `KEY_BLOB`).  That should not be done from within the database transaction.  Also, calls
+        // to `deleteKey()` need to be delayed until the boot has completed, to avoid making
+        // permanent changes during an OTA before the point of no return.  Mark the affected rows
+        // with `state=Orphaned` so a subsequent garbage collection can do the `deleteKey()`.
         tx.execute(
             "UPDATE persistent.blobentry SET state = ? WHERE keyentryid = ?",
             params![BlobState::Orphaned, key_id],
