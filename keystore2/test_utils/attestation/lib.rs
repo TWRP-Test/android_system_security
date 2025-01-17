@@ -63,7 +63,7 @@ pub struct AttestationExtension<'a> {
     pub hw_enforced: AuthorizationList<'a>,
 }
 
-impl<'a> AssociatedOid for AttestationExtension<'a> {
+impl AssociatedOid for AttestationExtension<'_> {
     const OID: ObjectIdentifier = ATTESTATION_EXTENSION_OID;
 }
 
@@ -112,7 +112,7 @@ pub struct PackageInfoRecord<'a> {
     pub version: i64,
 }
 
-impl<'a> DerOrd for PackageInfoRecord<'a> {
+impl DerOrd for PackageInfoRecord<'_> {
     fn der_cmp(&self, other: &Self) -> Result<std::cmp::Ordering, der::Error> {
         self.package_name.der_cmp(&other.package_name)
     }
@@ -139,7 +139,7 @@ pub struct AuthorizationList<'a> {
     pub auths: Cow<'a, [KeyParameter]>,
 }
 
-impl<'a> From<Vec<KeyParameter>> for AuthorizationList<'a> {
+impl From<Vec<KeyParameter>> for AuthorizationList<'_> {
     /// Build an `AuthorizationList` using a set of key parameters.
     fn from(auths: Vec<KeyParameter>) -> Self {
         AuthorizationList { auths: auths.into() }
@@ -149,7 +149,7 @@ impl<'a> From<Vec<KeyParameter>> for AuthorizationList<'a> {
 impl<'a> Sequence<'a> for AuthorizationList<'a> {}
 
 /// Stub (non-)implementation of DER-encoding, needed to implement [`Sequence`].
-impl<'a> EncodeValue for AuthorizationList<'a> {
+impl EncodeValue for AuthorizationList<'_> {
     fn value_len(&self) -> der::Result<Length> {
         unimplemented!("Only decoding is implemented");
     }

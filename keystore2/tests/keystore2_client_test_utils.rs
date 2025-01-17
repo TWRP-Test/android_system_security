@@ -519,9 +519,7 @@ pub fn verify_aliases(
 // then returns an empty byte vector.
 pub fn get_system_prop(name: &str) -> Vec<u8> {
     match rustutils::system_properties::read(name) {
-        Ok(Some(value)) => {
-            return value.as_bytes().to_vec();
-        }
+        Ok(Some(value)) => value.as_bytes().to_vec(),
         _ => {
             vec![]
         }
