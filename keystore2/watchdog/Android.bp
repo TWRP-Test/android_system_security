@@ -26,6 +26,7 @@ rust_defaults {
     crate_name: "watchdog_rs",
     srcs: ["src/lib.rs"],
     rustlibs: [
+        "libchrono",
         "liblog_rust",
     ],
 }
