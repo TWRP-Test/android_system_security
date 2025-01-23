@@ -522,6 +522,10 @@ fn keystore2_gen_key_auth_max_uses_per_boot() {
 #[test]
 fn keystore2_gen_key_auth_usage_count_limit() {
     let sl = SecLevel::tee();
+    if sl.is_keymaster() {
+        // `USAGE_COUNT_LIMIT` is supported from KeyMint1.0
+        return;
+    }
     const MAX_USES_COUNT: i32 = 3;
 
     let gen_params = authorizations::AuthSetBuilder::new()
@@ -546,6 +550,10 @@ fn keystore2_gen_key_auth_usage_count_limit() {
 #[test]
 fn keystore2_gen_key_auth_usage_count_limit_one() {
     let sl = SecLevel::tee();
+    if sl.is_keymaster() {
+        // `USAGE_COUNT_LIMIT` is supported from KeyMint1.0
+        return;
+    }
     const MAX_USES_COUNT: i32 = 1;
 
     let gen_params = authorizations::AuthSetBuilder::new()
@@ -569,6 +577,10 @@ fn keystore2_gen_key_auth_usage_count_limit_one() {
 #[test]
 fn keystore2_gen_non_attested_key_auth_usage_count_limit() {
     let sl = SecLevel::tee();
+    if sl.is_keymaster() {
+        // `USAGE_COUNT_LIMIT` is supported from KeyMint1.0
+        return;
+    }
     const MAX_USES_COUNT: i32 = 2;
 
     let gen_params = authorizations::AuthSetBuilder::new()
@@ -631,6 +643,12 @@ fn keystore2_gen_key_auth_creation_date_time_test_fail_with_invalid_arg_error() 
 #[test]
 fn keystore2_gen_key_auth_include_unique_id_success() {
     let sl = SecLevel::tee();
+    if sl.is_keymaster() {
+        // b/387208956 - Some older devices with Keymaster implementations fail to generate an
+        // attestation key with `INCLUDE_UNIQUE_ID`, but this was not previously tested. Skip this
+        // test on devices with Keymaster implementation.
+        return;
+    }
 
     let alias_first = "ks_test_auth_tags_test_1";
     if let Some(unique_id_first) = gen_key_including_unique_id(&sl, alias_first) {
@@ -1024,6 +1042,11 @@ fn test_supplementary_attestation_info() {
     );
     assert!(result.is_err());
     assert_eq!(result.unwrap_err(), Error::Rc(ResponseCode::INVALID_ARGUMENT));
+
+    if sl.get_keymint_version() < 400 {
+        // Module hash will only be populated in KeyMint if the underlying device is KeyMint V4+.
+        return;
+    }
 
     // Generate an attestation.
     let alias = "ks_module_info_test";
