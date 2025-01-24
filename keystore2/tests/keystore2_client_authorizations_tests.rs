@@ -1025,6 +1025,11 @@ fn test_supplementary_attestation_info() {
         // Module info is only populated if the flag is set.
         return;
     }
+
+    // Test should not run before MODULE_HASH supplementary info is populated.
+    assert!(rustutils::system_properties::read_bool("keystore.module_hash.sent", false)
+        .unwrap_or(false));
+
     let sl = SecLevel::tee();
 
     // Retrieve the input value that gets hashed into the attestation.
