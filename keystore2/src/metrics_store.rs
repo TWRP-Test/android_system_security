@@ -205,7 +205,7 @@ fn process_key_creation_event_stats<U>(
     };
 
     let mut key_creation_with_auth_info = KeyCreationWithAuthInfo {
-        user_auth_type: MetricsHardwareAuthenticatorType::AUTH_TYPE_UNSPECIFIED,
+        user_auth_type: MetricsHardwareAuthenticatorType::NO_AUTH_TYPE,
         log10_auth_key_timeout_seconds: -1,
         security_level: MetricsSecurityLevel::SECURITY_LEVEL_UNSPECIFIED,
     };
@@ -257,6 +257,12 @@ fn process_key_creation_event_stats<U>(
                     }
                     HardwareAuthenticatorType::FINGERPRINT => {
                         MetricsHardwareAuthenticatorType::FINGERPRINT
+                    }
+                    a if a.0
+                        == HardwareAuthenticatorType::PASSWORD.0
+                            | HardwareAuthenticatorType::FINGERPRINT.0 =>
+                    {
+                        MetricsHardwareAuthenticatorType::PASSWORD_OR_FINGERPRINT
                     }
                     HardwareAuthenticatorType::ANY => MetricsHardwareAuthenticatorType::ANY,
                     _ => MetricsHardwareAuthenticatorType::AUTH_TYPE_UNSPECIFIED,
@@ -792,14 +798,14 @@ impl_summary_enum!(MetricsSecurityLevel, 9,
     SECURITY_LEVEL_KEYSTORE => "KEYSTORE",
 );
 
-// Metrics values for HardwareAuthenticatorType are broken -- the AIDL type is a bitmask
-// not an enum, so offseting the enum values by 1 doesn't work.
-impl_summary_enum!(MetricsHardwareAuthenticatorType, 6,
+impl_summary_enum!(MetricsHardwareAuthenticatorType, 8,
     AUTH_TYPE_UNSPECIFIED => "UNSPEC",
     NONE => "NONE",
     PASSWORD => "PASSWD",
     FINGERPRINT => "FPRINT",
+    PASSWORD_OR_FINGERPRINT => "PW_OR_FP",
     ANY => "ANY",
+    NO_AUTH_TYPE => "NOAUTH",
 );
 
 impl_summary_enum!(MetricsPurpose, 7,
