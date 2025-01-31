@@ -48,6 +48,9 @@ use anyhow::{anyhow, Context, Result};
 use std::collections::HashMap;
 use std::sync::{LazyLock, Mutex};
 
+#[cfg(test)]
+mod tests;
+
 // Note: Crash events are recorded at keystore restarts, based on the assumption that keystore only
 // gets restarted after a crash, during a boot cycle.
 const KEYSTORE_CRASH_COUNT_PROPERTY: &str = "keystore.crash_count";
@@ -978,33 +981,5 @@ impl Summary for KeystoreAtomPayload {
                 format!("atom={}", v.atom_id.show())
             }
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_enum_show() {
-        let algo = MetricsAlgorithm::RSA;
-        assert_eq!("RSA ", algo.show());
-        let algo = MetricsAlgorithm(42);
-        assert_eq!("Unknown(42)", algo.show());
-    }
-
-    #[test]
-    fn test_enum_bitmask_show() {
-        let mut modes = 0i32;
-        compute_block_mode_bitmap(&mut modes, BlockMode::ECB);
-        compute_block_mode_bitmap(&mut modes, BlockMode::CTR);
-
-        assert_eq!(show_blockmode(modes), "-T-E");
-
-        // Add some bits not covered by the enum of valid bit positions.
-        modes |= 0xa0;
-        assert_eq!(show_blockmode(modes), "-T-E(full:0x000000aa)");
-        modes |= 0x300;
-        assert_eq!(show_blockmode(modes), "-T-E(full:0x000003aa)");
     }
 }
