@@ -87,7 +87,9 @@ if __name__ == '__main__':
     real_digest = digests.digests[real_rel]
     link_digest.CopyFrom(real_digest)
 
-  manifest = digests.SerializeToString()
+  # Serialize with deterministic=True for reproducible builds and build caching.
+  # The serialized contents will still change across different versions of protobuf.
+  manifest = digests.SerializeToString(deterministic=True)
 
   with open(args.output, "wb") as f:
     f.write(manifest)
