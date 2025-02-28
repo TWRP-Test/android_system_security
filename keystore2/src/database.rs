@@ -1163,14 +1163,6 @@ impl KeystoreDB {
         let mut persistent_path_str = "file:".to_owned();
         persistent_path_str.push_str(&persistent_path.to_string_lossy());
 
-        // Connect to database in specific mode
-        let persistent_path_mode = if keystore2_flags::wal_db_journalmode_v3() {
-            "?journal_mode=WAL".to_owned()
-        } else {
-            "?journal_mode=DELETE".to_owned()
-        };
-        persistent_path_str.push_str(&persistent_path_mode);
-
         Ok(persistent_path_str)
     }
 
