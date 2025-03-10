@@ -2429,7 +2429,7 @@ impl KeystoreDB {
         tx.execute("DELETE FROM persistent.keyparameter WHERE keyentryid = ?;", params![key_id])
             .context("Trying to delete keyparameters.")?;
         tx.execute("DELETE FROM persistent.grant WHERE keyentryid = ?;", params![key_id])
-            .context("Trying to delete grants.")?;
+            .context("Trying to delete grants to other apps.")?;
         // The associated blobentry rows are not immediately deleted when the owning keyentry is
         // removed, because a KeyMint `deleteKey()` invocation is needed (specifically for the
         // `KEY_BLOB`).  That should not be done from within the database transaction.  Also, calls
@@ -2441,6 +2441,19 @@ impl KeystoreDB {
             params![BlobState::Orphaned, key_id],
         )
         .context("Trying to mark blobentrys as superseded")?;
+        Ok(updated != 0)
+    }
+
+    fn delete_received_grants(tx: &Transaction, user_id: u32) -> Result<bool> {
+        let updated = tx
+            .execute(
+                &format!("DELETE FROM persistent.grant WHERE cast ( (grantee/{AID_USER_OFFSET}) as int) = ?;"),
+                params![user_id],
+            )
+            .context(format!(
+                "Trying to delete grants received by user ID {:?} from other apps.",
+                user_id
+            ))?;
         Ok(updated != 0)
     }
 
@@ -2573,6 +2586,11 @@ impl KeystoreDB {
         let _wp = wd::watch("KeystoreDB::unbind_keys_for_user");
 
         self.with_transaction(Immediate("TX_unbind_keys_for_user"), |tx| {
+            Self::delete_received_grants(tx, user_id).context(format!(
+                "In unbind_keys_for_user. Failed to delete received grants for user ID {:?}.",
+                user_id
+            ))?;
+
             let mut stmt = tx
                 .prepare(&format!(
                     "SELECT id from persistent.keyentry
@@ -2618,7 +2636,7 @@ impl KeystoreDB {
             let mut notify_gc = false;
             for key_id in key_ids {
                 notify_gc = Self::mark_unreferenced(tx, key_id)
-                    .context("In unbind_keys_for_user.")?
+                    .context("In unbind_keys_for_user. Failed to mark key id as unreferenced.")?
                     || notify_gc;
             }
             Ok(()).do_gc(notify_gc)
