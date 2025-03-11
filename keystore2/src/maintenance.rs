@@ -510,10 +510,6 @@ impl Interface for Maintenance {
         f: &mut dyn std::io::Write,
         _args: &[&std::ffi::CStr],
     ) -> Result<(), binder::StatusCode> {
-        if !keystore2_flags::enable_dump() {
-            log::info!("skipping dump() as flag not enabled");
-            return Ok(());
-        }
         log::info!("dump()");
         let _wp = wd::watch("IKeystoreMaintenance::dump");
         check_dump_permission().map_err(|_e| {
