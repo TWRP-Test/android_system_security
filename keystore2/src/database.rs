@@ -2528,7 +2528,19 @@ impl KeystoreDB {
                 );",
                 params![domain.0, namespace, KeyType::Client],
             )
-            .context("Trying to delete grants.")?;
+            .context(format!(
+                "Trying to delete grants issued for keys in domain {:?} and namespace {:?}.",
+                domain.0, namespace
+            ))?;
+            if domain == Domain::APP {
+                // Keystore uses the UID instead of the namespace argument for Domain::APP, so we
+                // just need to delete rows where grantee == namespace.
+                tx.execute("DELETE FROM persistent.grant WHERE grantee = ?;", params![namespace])
+                    .context(format!(
+                    "Trying to delete received grants for domain {:?} and namespace {:?}.",
+                    domain.0, namespace
+                ))?;
+            }
             tx.execute(
                 "DELETE FROM persistent.keyentry
                  WHERE domain = ? AND namespace = ? AND key_type = ?;",
