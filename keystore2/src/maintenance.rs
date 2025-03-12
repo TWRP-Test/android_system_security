@@ -251,7 +251,7 @@ impl Maintenance {
         if keystore2_flags::attest_modules() {
             std::thread::spawn(move || {
                 Self::watch_apex_info()
-                    .unwrap_or_else(|e| log::error!("watch_apex_info failed: {e:?}"));
+                    .unwrap_or_else(|e| log::error!("watch_apex_info failed, preventing keystore.module_hash.sent from being set to true; this may therefore block boot: {e:?}"));
             });
         } else {
             rustutils::system_properties::write("keystore.module_hash.sent", "true")
