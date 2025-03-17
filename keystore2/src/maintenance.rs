@@ -376,7 +376,10 @@ impl Maintenance {
         writeln!(f, "keystore2 running")?;
         writeln!(f)?;
 
-        // Display underlying device information
+        // Display underlying device information.
+        //
+        // Note that this chunk of output is parsed in a GTS test, so do not change the format
+        // without checking that the test still works.
         for sec_level in &[SecurityLevel::TRUSTED_ENVIRONMENT, SecurityLevel::STRONGBOX] {
             let Ok((_dev, hw_info, uuid)) = get_keymint_device(sec_level) else { continue };
 
