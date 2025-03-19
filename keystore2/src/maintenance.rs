@@ -247,17 +247,42 @@ impl Maintenance {
         {
             log::error!("SUPER_KEY.set_up_boot_level_cache failed:\n{:?}\n:(", e);
         }
+        Maintenance::call_on_all_security_levels("earlyBootEnded", |dev| dev.earlyBootEnded(), None)
+    }
 
+    /// Spawns a thread to send module info if it hasn't already been sent. The thread first waits
+    /// for the apex info to be available.
+    /// (Module info would have already been sent in the case of a Keystore restart.)
+    ///
+    /// # Panics
+    ///
+    /// This method, and methods it calls, panic on failure, because a failure to populate module
+    /// information will block the boot process from completing. In this method, this happens if:
+    /// - the `apexd.status` property is unable to be monitored
+    /// - the `keystore.module_hash.sent` property cannot be updated
+    pub fn check_send_module_info() {
+        if rustutils::system_properties::read_bool("keystore.module_hash.sent", false)
+            .unwrap_or(false)
+        {
+            log::info!("Module info has already been sent.");
+            return;
+        }
         if keystore2_flags::attest_modules() {
             std::thread::spawn(move || {
-                Self::watch_apex_info()
-                    .unwrap_or_else(|e| log::error!("watch_apex_info failed, preventing keystore.module_hash.sent from being set to true; this may therefore block boot: {e:?}"));
+                // Wait for apex info to be available before populating.
+                Self::watch_apex_info().unwrap_or_else(|e| {
+                    log::error!("failed to monitor apexd.status property: {e:?}");
+                    panic!("Terminating due to inaccessibility of apexd.status property, blocking boot: {e:?}");
+                });
             });
         } else {
             rustutils::system_properties::write("keystore.module_hash.sent", "true")
-                .context(ks_err!("failed to set keystore.module_hash.sent to true"))?;
+                .unwrap_or_else(|e| {
+                        log::error!("Failed to set keystore.module_hash.sent to true; this will therefore block boot: {e:?}");
+                        panic!("Crashing Keystore because it failed to set keystore.module_hash.sent to true (which blocks boot).");
+                    }
+                );
         }
-        Maintenance::call_on_all_security_levels("earlyBootEnded", |dev| dev.earlyBootEnded(), None)
     }
 
     /// Watch the `apexd.status` system property, and read apex module information once
@@ -273,18 +298,38 @@ impl Maintenance {
             let value = w.read(|_name, value| Ok(value.to_string()));
             log::info!("property '{apex_prop}' is now '{value:?}'");
             if matches!(value.as_deref(), Ok("activated")) {
-                let modules =
-                    Self::read_apex_info().context(ks_err!("failed to read apex info"))?;
-                Self::set_module_info(modules).context(ks_err!("failed to set module info"))?;
-                rustutils::system_properties::write("keystore.module_hash.sent", "true")
-                    .context(ks_err!("failed to set keystore.module_hash.sent to true"))?;
-                break;
+                Self::read_and_set_module_info();
+                return Ok(());
             }
             log::info!("await a change to '{apex_prop}'...");
             w.wait(None).context(ks_err!("property wait failed"))?;
             log::info!("await a change to '{apex_prop}'...notified");
         }
-        Ok(())
+    }
+
+    /// Read apex information (which is assumed to be present) and propagate module
+    /// information to KeyMint instances.
+    ///
+    /// # Panics
+    ///
+    /// This method panics on failure, because a failure to populate module information
+    /// will block the boot process from completing.  This happens if:
+    /// - apex information is not available (precondition)
+    /// - KeyMint instances fail to accept module information
+    /// - the `keystore.module_hash.sent` property cannot be updated
+    fn read_and_set_module_info() {
+        let modules = Self::read_apex_info().unwrap_or_else(|e| {
+            log::error!("failed to read apex info: {e:?}");
+            panic!("Terminating due to unavailability of apex info, blocking boot: {e:?}");
+        });
+        Self::set_module_info(modules).unwrap_or_else(|e| {
+            log::error!("failed to set module info: {e:?}");
+            panic!("Terminating due to KeyMint not accepting module info, blocking boot: {e:?}");
+        });
+        rustutils::system_properties::write("keystore.module_hash.sent", "true").unwrap_or_else(|e| {
+            log::error!("failed to set keystore.module_hash.sent property: {e:?}");
+            panic!("Terminating due to failure to set keystore.module_hash.sent property, blocking boot: {e:?}");
+        });
     }
 
     fn read_apex_info() -> Result<Vec<ModuleInfo>> {
