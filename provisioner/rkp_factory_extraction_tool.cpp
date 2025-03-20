@@ -40,19 +40,20 @@ using aidl::android::hardware::security::keymint::remote_prov::RKPVM_INSTANCE_NA
 
 DEFINE_string(output_format, "build+csr", "How to format the output. Defaults to 'build+csr'.");
 DEFINE_bool(self_test, true,
-            "If true, this tool performs a self-test, validating the payload for correctness. "
-            "This checks that the device on the factory line is producing valid output "
-            "before attempting to upload the output to the device info service.");
+            "Whether to validate the output for correctness. If enabled, this checks that the "
+            "device on the factory line is producing valid output before attempting to upload the "
+            "output to the device info service. Defaults to true.");
 DEFINE_string(allow_degenerate, "",
               "Comma-delimited list of names of IRemotelyProvisionedComponent instances for which "
               "self_test validation allows degenerate DICE chains in the CSR. Example: "
-              "avf,default,strongbox");
+              "avf,default,strongbox. Defaults to the empty string.");
 DEFINE_string(serialno_prop, "ro.serialno",
-              "The property of getting serial number. Defaults to 'ro.serialno'.");
+              "System property from which the serial number should be retrieved. Defaults to "
+              "'ro.serialno'.");
 DEFINE_string(require_uds_certs, "",
-              "The comma-delimited names of remotely provisioned "
-              "components whose UDS certificate chains are required to be present in the CSR. "
-              "Example: avf,default,strongbox");
+              "Comma-delimited list of names of IRemotelyProvisionedComponent instances for which "
+              "UDS certificate chains are required to be present in the CSR. Example: "
+              "avf,default,strongbox. Defaults to the empty string.");
 
 namespace {
 
