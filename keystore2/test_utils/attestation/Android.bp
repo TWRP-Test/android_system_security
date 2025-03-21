@@ -41,6 +41,7 @@ rust_library {
     name: "libkeystore_attestation",
     defaults: ["libkeystore_attestation_defaults"],
     vendor_available: true,
+    min_sdk_version: "35",
 }
 
 rust_test {
