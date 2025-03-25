@@ -364,13 +364,13 @@ impl Operation {
             .lock()
             .unwrap()
             .before_update()
-            .context(ks_err!("Trying to get auth tokens."))?;
+            .context(ks_err!("Trying to get auth tokens for uid {}", self.owner))?;
 
         self.update_outcome(&mut outcome, {
             let _wp = self.watch("Operation::update_aad: calling IKeyMintOperation::updateAad");
             map_km_error(self.km_op.updateAad(aad_input, hat.as_ref(), tst.as_ref()))
         })
-        .context(ks_err!("Update failed."))?;
+        .context(ks_err!("Update failed for uid {}", self.owner))?;
 
         Ok(())
     }
@@ -387,14 +387,14 @@ impl Operation {
             .lock()
             .unwrap()
             .before_update()
-            .context(ks_err!("Trying to get auth tokens."))?;
+            .context(ks_err!("Trying to get auth tokens for uid {}", self.owner))?;
 
         let output = self
             .update_outcome(&mut outcome, {
                 let _wp = self.watch("Operation::update: calling IKeyMintOperation::update");
                 map_km_error(self.km_op.update(input, hat.as_ref(), tst.as_ref()))
             })
-            .context(ks_err!("Update failed."))?;
+            .context(ks_err!("Update failed for uid {}", self.owner))?;
 
         if output.is_empty() {
             Ok(None)
@@ -417,7 +417,7 @@ impl Operation {
             .lock()
             .unwrap()
             .before_finish()
-            .context(ks_err!("Trying to get auth tokens."))?;
+            .context(ks_err!("Trying to get auth tokens for uid {}", self.owner))?;
 
         let output = self
             .update_outcome(&mut outcome, {
@@ -430,7 +430,7 @@ impl Operation {
                     confirmation_token.as_deref(),
                 ))
             })
-            .context(ks_err!("Finish failed."))?;
+            .context(ks_err!("Finish failed for uid {}", self.owner))?;
 
         self.auth_info.lock().unwrap().after_finish().context("In finish.")?;
 
